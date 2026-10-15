@@ -1,0 +1,22 @@
+.deps/
+.test-obs/
+build/
+out/
+bin/
+obj/
+dist/
+__pycache__/
+node_modules/
+*.pdb
+*.ilk
+*.user
+CMakeUserPresets.json
+# seuls README, CONCEPTION et les licences sont publiés : pas de notes ni de dossiers cachés
+*.md
+!README.md
+!CONCEPTION.md
+!LICENSE.md
+!third_party/**/*.md
+.*
+!.gitignore
+!.gitattributes

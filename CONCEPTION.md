@@ -478,7 +478,7 @@ Fait :
     `srt.dll` a besoin (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`, copiés du
     dossier de redistribution des Build Tools), rien à installer à part ;
   - les licences des composants livrés dans `licences\` (SRT, mbedTLS, Opus, Monocypher,
-    nlohmann/json, WebView2) ;
+    nlohmann/json, en-têtes NVENC de NVIDIA, WebView2) ;
   - le plugin dans `%ProgramData%\obs-studio\plugins\flash-obs` (`bin\64bit` et `data`),
     comme les autres plugins tiers : il survit à une réinstallation d'OBS. Composant à part,
     qu'on peut décocher ;

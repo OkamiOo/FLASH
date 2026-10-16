@@ -464,3 +464,45 @@ Reste pour cette étape :
   d'OBS ;
 - la latence du son sur une vraie sortie, et une mesure physique de la synchro (filmer
   l'écran et enregistrer le son).
+
+## 14. Étape (d) : installeur
+
+Fait :
+
+- `build.ps1 -Installeur` compile l'appli puis l'installeur (Inno Setup 6.7.3, dans
+  `.deps\innosetup`) depuis le lecteur virtuel : `dist\FLASH-<version>-installation.exe`,
+  3 Mo. La version vient de `CMakeLists.txt`. Script : `installer\flash.iss` (UTF-8 avec BOM,
+  sans quoi Inno Setup lit les accents en ANSI).
+- Ce qui est installé :
+  - l'appli dans `Program Files\FLASH` : `flash.exe`, `srt.dll` et le runtime Visual C++ dont
+    `srt.dll` a besoin (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`, copiés du
+    dossier de redistribution des Build Tools), rien à installer à part ;
+  - les licences des composants livrés dans `licences\` (SRT, mbedTLS, Opus, Monocypher,
+    nlohmann/json, WebView2) ;
+  - le plugin dans `%ProgramData%\obs-studio\plugins\flash-obs` (`bin\64bit` et `data`),
+    comme les autres plugins tiers : il survit à une réinstallation d'OBS. Composant à part,
+    qu'on peut décocher ;
+  - un raccourci dans le menu Démarrer, une icône sur le bureau au choix.
+- Pare-feu : une tâche cochée par défaut, et visible, ajoute une règle entrante « FLASH »
+  pour `flash.exe` sur les réseaux privés seulement. Elle est retirée à la désinstallation.
+- Mise à jour : si FLASH tourne, l'installeur lui envoie le message « FLASH-quitter » (FLASH
+  quitte comme avec son menu Quitter) et attend la fin de son verrou d'instance unique. Jamais
+  d'arrêt forcé. Si OBS est ouvert (verrou `OBSStudioCore`), l'installeur demande de le fermer
+  et attend ; il ne le ferme jamais lui-même.
+- Désinstallation : mêmes précautions, retrait du lancement avec Windows, puis question : effacer
+  aussi les réglages et appairages (FLASH et carnet du plugin) ? Non par défaut.
+- Windows 10 2004 au minimum. Le son par application et le son du système sans FLASH
+  demandent Windows 11 (capture par processus) ; sous Windows 10, ces sources restent muettes.
+- Vérifié : compilation sans avertissement ; une copie sans compression ne contient aucun chemin
+  de la machine ; propriétés du fichier (FLASH 0.1.0, « Installation de FLASH ») ; fermeture de
+  FLASH par le message de l'installeur (FLASH caché dans la zone de notification, sorti en moins
+  d'une seconde, code 0).
+- Pas encore vérifié : l'installation elle-même (droits d'administrateur, règle de pare-feu),
+  à lancer à la main.
+
+Limites connues :
+
+- L'installeur n'est pas signé : au premier lancement, SmartScreen affiche « Windows a protégé
+  votre ordinateur » (« Informations complémentaires », puis « Exécuter quand même »). Un
+  certificat de signature de code règlerait ça avant une diffusion publique.
+- La licence de FLASH lui-même reste à choisir avant toute diffusion.

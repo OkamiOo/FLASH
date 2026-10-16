@@ -349,6 +349,12 @@ void tray_menu()
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+	// L'installeur demande à FLASH de quitter avant de remplacer ses fichiers
+	static const UINT quit_request = RegisterWindowMessageW(L"FLASH-quitter");
+	if (msg == quit_request) {
+		DestroyWindow(hwnd);
+		return 0;
+	}
 	switch (msg) {
 	case WM_SIZE:
 		if (g && g->controller) {

@@ -1,0 +1,4 @@
+#include "resource.h"
+
+IDI_FLASH ICON "ui/flash.ico"
+IDR_UI RCDATA "ui/index.html"

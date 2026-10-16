@@ -83,6 +83,8 @@ private:
 	AVPacket *packet_ = nullptr;
 	bool waiting_keyframe_ = true;
 	flash::CadenceSmoother cadence_;
+	int64_t prev_d_ = 0; // écart rendu - heure visée de l'image précédente
+	bool have_prev_ = false;
 	uint64_t frames_ = 0;
 	uint64_t decoded_ = 0;
 };

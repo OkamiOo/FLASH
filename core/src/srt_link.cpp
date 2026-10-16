@@ -77,6 +77,7 @@ SrtServer::~SrtServer()
 
 bool SrtServer::start(const SrtOptions &o, OnJoin on_join, OnMessage on_message)
 {
+	options_ = o;
 	on_join_ = std::move(on_join);
 	on_message_ = std::move(on_message);
 
@@ -88,7 +89,10 @@ bool SrtServer::start(const SrtOptions &o, OnJoin on_join, OnMessage on_message)
 
 	listener_ = srt_create_socket();
 	apply_common(listener_, o);
+	set_int(listener_, SRTO_PBKEYLEN, 32); // AES-256 pour les récepteurs appairés
 	set_bool(listener_, SRTO_RCVSYN, false);
+	if (o.authorize)
+		srt_listen_callback(listener_, (srt_listen_callback_fn *)&SrtServer::listen_hook, this);
 
 	if (srt_bind(listener_, (sockaddr *)&addr, sizeof(addr)) == SRT_ERROR ||
 	    srt_listen(listener_, 8) == SRT_ERROR) {
@@ -106,6 +110,20 @@ bool SrtServer::start(const SrtOptions &o, OnJoin on_join, OnMessage on_message)
 	thread_ = std::thread(&SrtServer::run, this);
 	FLOG_I("En écoute SRT sur %s:%u (latence %d ms)", o.address.c_str(), o.port, o.latency_ms);
 	return true;
+}
+
+// Chaque demande de connexion : l'identifiant du récepteur choisit sa phrase secrète
+int SrtServer::listen_hook(void *self, int sock, int, const ::sockaddr *, const char *stream_id)
+{
+	auto *server = (SrtServer *)self;
+	std::string passphrase;
+	if (!server->options_.authorize(stream_id ? stream_id : "", passphrase)) {
+		FLOG_W("Connexion refusée : récepteur non appairé");
+		return -1;
+	}
+	if (!passphrase.empty())
+		srt_setsockflag(sock, SRTO_PASSPHRASE, passphrase.data(), (int)passphrase.size());
+	return 0;
 }
 
 void SrtServer::stop()
@@ -289,6 +307,10 @@ void SrtClient::run()
 	bool warned = false;
 
 	while (running_) {
+		if (options_.refresh && !options_.refresh(options_)) {
+			sleep_until_ns(now_ns() + 1'000'000'000ULL);
+			continue;
+		}
 		sockaddr_in addr{};
 		if (!resolve(options_.address, options_.port, addr)) {
 			if (!warned)

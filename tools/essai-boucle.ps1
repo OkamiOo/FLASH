@@ -1,7 +1,8 @@
-# Essai en boucle locale : l'appli FLASH vers l'OBS portable de test (.test-obs), avec le
+﻿# Essai en boucle locale : l'appli FLASH vers l'OBS portable de test (.test-obs), avec le
 # journal de mesure du plugin, puis analyse.
 # -Banc : au lieu de la mire, capture réelle de la fenêtre d'essai (WGC) et de son son
 # (loopback de l'application), comme pour un jeu.
+# -Appaire : appairage du plugin avec le code, sources par identifiant d'émetteur, flux chiffré.
 # Ne touche jamais à l'OBS habituel : seuls les processus lancés ici sont arrêtés, par PID.
 param(
     [int]$Duree = 60,
@@ -11,7 +12,8 @@ param(
     [switch]$Banc,
     [int]$EcranBanc = 0,          # 0 = dernier écran
     [string]$SortieBanc = "Steam Streaming Speakers",
-    [string]$Collection = "FlashTest"
+    [string]$Collection = "FlashTest",
+    [switch]$Appaire
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,9 +40,45 @@ if ($Banc) {
         $Sources = @("--fenetre", "`"Banc FLASH`"", "--appli", "banc.exe")
     }
 }
-$sender = Start-Process -FilePath $app -ArgumentList ($Sources + @("--duree", ($Duree + 10), "--latence", $Latence)) `
+# Sans -Appaire, --libre : les scènes de test se connectent par adresse, sans appairage.
+# Avec -Appaire, l'envoi n'accepte que les récepteurs appairés et le flux est chiffré.
+$envoiArgs = $Sources + @("--duree", ($Duree + 10), "--latence", $Latence)
+if (-not $Appaire) { $envoiArgs += "--libre" }
+$sender = Start-Process -FilePath $app -ArgumentList $envoiArgs `
     -WorkingDirectory (Split-Path $app) -RedirectStandardError (Join-Path $out "envoi-$stamp.log") `
     -WindowStyle Hidden -PassThru
+
+if ($Appaire) {
+    # Le plugin de l'OBS de test s'appaire avec l'émetteur, puis ses sources visent l'émetteur
+    # par son identifiant et les pistes par leur nom
+    Start-Sleep -Seconds 2
+    $cfg = Get-Content (Join-Path $env:APPDATA "FLASH\reglages.json") -Raw | ConvertFrom-Json
+    $carnet = Join-Path $root ".test-obs\config\obs-studio\plugin_config\flash-obs\flash.json"
+    New-Item -ItemType Directory -Force (Split-Path $carnet) | Out-Null
+    & (Join-Path $root "build\tools\essai-appairage.exe") 127.0.0.1 $cfg.code $carnet
+
+    $items = @(); $listeSources = @(); $i = 1
+    foreach ($s in @(@("flash_video_source", "FLASH vidéo", "Mire"), @("flash_audio_source", "FLASH audio", "Bip"))) {
+        $uuid = [guid]::NewGuid().ToString()
+        $listeSources += @{ id = $s[0]; versioned_id = $s[0]; name = $s[1]; uuid = $uuid; enabled = $true; muted = $false
+            volume = 1.0; balance = 0.5; mixers = 255; sync = 0; flags = 0; monitoring_type = 0; private_settings = @{}
+            settings = @{ emetteur = $cfg.id; piste = $s[2]; latence = $Latence } }
+        $items += @{ name = $s[1]; source_uuid = $uuid; visible = $true; locked = $false; id = $i; align = 5; rot = 0.0
+            pos = @{ x = 0.0; y = 0.0 }; scale = @{ x = 1.0; y = 1.0 }; bounds_type = 0; bounds_align = 0
+            bounds = @{ x = 0.0; y = 0.0 }; scale_filter = "disable"; blend_method = "default"; blend_type = "normal"
+            private_settings = @{} }
+        $i++
+    }
+    $scene = @{ id = "scene"; versioned_id = "scene"; name = "Scène"; uuid = [guid]::NewGuid().ToString()
+        enabled = $true; mixers = 255; private_settings = @{}; settings = @{ items = $items; id_counter = $i; custom_size = $false } }
+    $col = @{ name = "FlashAppairage"; current_scene = "Scène"; current_program_scene = "Scène"
+        scene_order = @(@{ name = "Scène" }); sources = @($scene) + $listeSources; groups = @(); transitions = @()
+        quick_transitions = @(); saved_projectors = @(); current_transition = "Fondu"; transition_duration = 300
+        preview_locked = $false; scaling_enabled = $false; modules = @{} }
+    $scenes = Join-Path $root ".test-obs\config\obs-studio\basic\scenes\FlashAppairage.json"
+    [IO.File]::WriteAllText($scenes, ($col | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding $false))
+    $Collection = "FlashAppairage"
+}
 
 # Collection de scènes de l'OBS de test (FlashTest : une vidéo et un son ; FlashMulti : trois et trois)
 $userIni = Join-Path $root ".test-obs\config\obs-studio\user.ini"

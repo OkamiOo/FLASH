@@ -1,11 +1,15 @@
-// FLASH : envoi en ligne de commande, en attendant l'interface.
+// FLASH : sans argument, l'interface ; avec des arguments, la ligne de commande (essais, scripts).
 
 #include "banc.h"
+#include "engine.h"
+#include "ui.h"
 
 #include <flash/clock.h>
+#include <flash/discovery.h>
 #include <flash/inputs.h>
 #include <flash/log.h>
-#include <flash/sender.h>
+#include <flash/pairing.h>
+#include <flash/security.h>
 
 #include <windows.h>
 
@@ -27,7 +31,10 @@ BOOL WINAPI on_console_event(DWORD)
 }
 
 const char *kUsage = R"(Usage :
+  flash                             interface
   flash --liste                     écrans, fenêtres, applis qui jouent du son, micros
+  flash --chercher                  émetteurs FLASH du réseau
+  flash --appairer adresse code     appairage d'essai, comme le ferait un récepteur
   flash [sources] [réglages]        envoie les sources choisies
   flash --banc [--sortie nom] [--ecran N]   fenêtre d'essai (image + bips) à capturer
 
@@ -40,7 +47,8 @@ Sources (autant que voulu) :
   --micro [nom]          micro (par défaut celui de Windows)
 
 Réglages :
-  --adresse ip           adresse d'écoute (127.0.0.1 par défaut)
+  --reseau               accessible depuis le réseau (sinon ce PC seulement)
+  --libre                accepte les récepteurs sans appairage
   --port N               port SRT (9710)
   --debit kbps           débit vidéo par piste (25000)
   --latence ms           latence SRT (20)
@@ -53,25 +61,19 @@ Réglages :
 
 struct Args {
 	bool list = false;
+	bool search = false;
 	bool banc = false;
 	int banc_screen = 0; // 0 = dernier écran
 	std::string output;
-	std::vector<std::unique_ptr<VideoInput>> video;
-	std::vector<std::unique_ptr<AudioInput>> audio;
-	SenderOptions options;
-	uint32_t max_w = 1920, max_h = 1080;
-	bool cursor = true;
+	std::string pair_address, pair_code;
+	std::vector<SourceChoice> sources;
+	EngineSettings settings;
 	int duration_s = 0;
 };
 
 bool parse_args(int argc, char **argv, Args &a)
 {
-	// Les sources se créent après lecture de tous les réglages (taille, curseur)
-	struct Pending {
-		std::string kind, value;
-	};
-	std::vector<Pending> sources;
-
+	a.settings.address = "127.0.0.1";
 	for (int i = 1; i < argc; i++) {
 		const std::string arg = argv[i];
 		auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
@@ -80,75 +82,54 @@ bool parse_args(int argc, char **argv, Args &a)
 		};
 		if (arg == "--liste")
 			a.list = true;
-		else if (arg == "--banc")
+		else if (arg == "--chercher")
+			a.search = true;
+		else if (arg == "--appairer") {
+			a.pair_address = next();
+			a.pair_code = next();
+		} else if (arg == "--banc")
 			a.banc = true;
 		else if (arg == "--sortie")
 			a.output = next();
-		else if (arg == "--mire" || arg == "--systeme")
-			sources.push_back({arg, ""});
-		else if (arg == "--ecran" || arg == "--fenetre" || arg == "--appli")
-			sources.push_back({arg, next()});
-		else if (arg == "--micro")
-			sources.push_back({arg, optional()});
-		else if (arg == "--adresse")
-			a.options.srt.address = next();
-		else if (arg == "--port")
-			a.options.srt.port = (uint16_t)std::atoi(next().c_str());
-		else if (arg == "--debit")
-			a.options.video_kbps = (uint32_t)std::atoi(next().c_str());
-		else if (arg == "--latence")
-			a.options.srt.latency_ms = std::atoi(next().c_str());
-		else if (arg == "--taille") {
+		else if (arg == "--mire")
+			a.sources.push_back({"mire", ""});
+		else if (arg == "--systeme")
+			a.sources.push_back({"systeme", ""});
+		else if (arg == "--ecran") {
 			const std::string v = next();
-			if (std::sscanf(v.c_str(), "%ux%u", &a.max_w, &a.max_h) != 2)
+			a.sources.push_back({"ecran", v});
+			a.banc_screen = std::atoi(v.c_str());
+		} else if (arg == "--fenetre")
+			a.sources.push_back({"fenetre", next()});
+		else if (arg == "--appli")
+			a.sources.push_back({"appli", next()});
+		else if (arg == "--micro")
+			a.sources.push_back({"micro", optional()});
+		else if (arg == "--reseau")
+			a.settings.address = "0.0.0.0";
+		else if (arg == "--libre")
+			a.settings.open = true;
+		else if (arg == "--port")
+			a.settings.port = (uint16_t)std::atoi(next().c_str());
+		else if (arg == "--debit")
+			a.settings.video_kbps = (uint32_t)std::atoi(next().c_str());
+		else if (arg == "--latence")
+			a.settings.latency_ms = std::atoi(next().c_str());
+		else if (arg == "--taille") {
+			if (std::sscanf(next().c_str(), "%ux%u", &a.settings.max_w, &a.settings.max_h) != 2)
 				return false;
 		} else if (arg == "--hevc")
-			a.options.codec = Codec::HEVC;
+			a.settings.hevc = true;
 		else if (arg == "--encodeur")
-			a.options.encoder = next();
+			a.settings.encoder = next();
 		else if (arg == "--sans-curseur")
-			a.cursor = false;
+			a.settings.cursor = false;
 		else if (arg == "--duree")
 			a.duration_s = std::atoi(next().c_str());
 		else
 			return false;
 	}
-
-	// Avec --banc, --ecran désigne l'écran où ouvrir la fenêtre d'essai
-	if (a.banc) {
-		for (const Pending &s : sources)
-			if (s.kind == "--ecran")
-				a.banc_screen = std::atoi(s.value.c_str());
-		return true;
-	}
-
-	// La mire démarre sur une seconde pleine de l'horloge commune, comme le banc
-	const uint64_t t0 = (now_ns() / 1'000'000'000ULL + 1) * 1'000'000'000ULL;
-	for (const Pending &s : sources) {
-		if (s.kind == "--mire") {
-			a.video.push_back(make_mire_input(t0));
-			a.audio.push_back(make_beep_input(t0));
-		} else if (s.kind == "--ecran") {
-			a.video.push_back(make_screen_input(std::atoi(s.value.c_str()), a.max_w, a.max_h, a.cursor));
-		} else if (s.kind == "--fenetre") {
-			a.video.push_back(make_window_input(s.value, a.max_w, a.max_h, a.cursor));
-		} else if (s.kind == "--appli") {
-			a.audio.push_back(make_app_audio_input(s.value));
-		} else if (s.kind == "--systeme") {
-			a.audio.push_back(make_system_audio_input());
-		} else if (s.kind == "--micro") {
-			a.audio.push_back(make_mic_input(s.value));
-		}
-	}
-	return a.list || a.banc || !a.video.empty() || !a.audio.empty();
-}
-
-std::string host_name()
-{
-	char name[256] = "PC";
-	DWORD size = sizeof(name);
-	GetComputerNameA(name, &size);
-	return name;
+	return a.list || a.search || a.banc || !a.pair_address.empty() || !a.sources.empty();
 }
 
 void print_lists()
@@ -168,24 +149,45 @@ void print_lists()
 		std::printf("  %s\n", m.c_str());
 }
 
-int run_sender(Args &args)
+void print_senders()
+{
+	const auto senders = discover_senders(800);
+	if (senders.empty())
+		std::printf("Aucun émetteur FLASH trouvé.\n");
+	for (const SenderAnnounce &s : senders) {
+		std::printf("%s (%s) %s:%u%s\n", s.name.c_str(), s.id.c_str(), s.address.c_str(), s.srt_port,
+			    s.open ? ", ouvert" : "");
+		for (const AnnouncedTrack &t : s.tracks)
+			std::printf("  %s « %s »\n", t.video ? "vidéo" : "son", t.name.c_str());
+	}
+}
+
+int run_pairing(const Args &args)
+{
+	const PairingResult r = pair_with_sender(args.pair_address, kPairingPort, args.pair_code, {new_device_id(), "Essai"});
+	if (!r.ok) {
+		std::printf("Échec : %s\n", r.error.c_str());
+		return 1;
+	}
+	std::printf("Appairé avec « %s » (%s)\n", r.sender.name.c_str(), r.sender.id.c_str());
+	return 0;
+}
+
+int run_console(const Args &args)
 {
 	enable_precise_timers();
-
-	std::string gpu;
-	ComPtr<ID3D11Device> device = create_d3d11_device(&gpu);
-	if (!device)
+	Engine engine;
+	const EngineSettings &s = args.settings;
+	engine.preset(s);
+	if (!engine.start(false))
 		return 1;
-	FLOG_I("GPU : %s", gpu.c_str());
-
-	args.options.host_name = host_name();
-	Sender sender;
-	if (!sender.start(args.options, device, std::move(args.video), std::move(args.audio)))
-		return 1;
-	FLOG_I("Envoi sur srt://%s:%u (Ctrl+C pour arrêter)", args.options.srt.address.c_str(), args.options.srt.port);
+	engine.set_sources(args.sources);
+	FLOG_I("« %s » : envoi sur %s:%u, code d'invitation %s (Ctrl+C pour arrêter)", engine.name().c_str(),
+	       s.address.c_str(), s.port, engine.code().c_str());
 
 	const uint64_t start = now_ns();
 	uint64_t report = start + 5'000'000'000ULL;
+	engine.status(); // départ des compteurs
 	while (g_running) {
 		Sleep(100);
 		const uint64_t now = now_ns();
@@ -194,30 +196,52 @@ int run_sender(Args &args)
 		if (now < report)
 			continue;
 		report += 5'000'000'000ULL;
-		std::string line = std::to_string(sender.client_count()) + " récepteur(s)";
-		for (const TrackStats &s : sender.stats()) {
+		const nlohmann::json st = engine.status();
+		std::string line = std::to_string(st["connectes"].get<size_t>()) + " récepteur(s)";
+		for (const auto &t : st["pistes"]) {
 			char buf[160];
-			if (s.video)
-				std::snprintf(buf, sizeof(buf), " | %s : %.0f i/s (%.0f capturées, %llu clés), %.1f Mb/s, encodage %.2f ms (max %.2f)",
-					      s.name.c_str(), s.frames / 5.0, s.captured / 5.0, (unsigned long long)s.keyframes,
-					      s.bytes * 8 / 5e6, s.encode_ms_avg, s.encode_ms_max);
+			if (!t["active"].get<bool>())
+				std::snprintf(buf, sizeof(buf), " | %s : en pause", t["nom"].get<std::string>().c_str());
+			else if (t["video"].get<bool>())
+				std::snprintf(buf, sizeof(buf), " | %s : %.0f i/s, %.1f Mb/s, encodage %.2f ms",
+					      t["nom"].get<std::string>().c_str(), t["ips"].get<double>(),
+					      t["kbps"].get<double>() / 1000, t["encodage_ms"].get<double>());
 			else
-				std::snprintf(buf, sizeof(buf), " | %s : %.0f kb/s", s.name.c_str(), s.bytes * 8 / 5e3);
-			line += s.active ? buf : " | " + s.name + " : en pause";
+				std::snprintf(buf, sizeof(buf), " | %s : %.0f kb/s", t["nom"].get<std::string>().c_str(),
+					      t["kbps"].get<double>());
+			line += buf;
 		}
 		FLOG_I("%s", line.c_str());
 	}
-	sender.stop();
+	engine.stop();
 	return 0;
+}
+
+// Appli fenêtrée : en ligne de commande, on écrit dans la console qui l'a lancée
+void attach_console()
+{
+	if (GetFileType(GetStdHandle(STD_ERROR_HANDLE)) != FILE_TYPE_UNKNOWN)
+		return; // sorties déjà redirigées (script)
+	if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+		std::freopen("CONOUT$", "w", stdout);
+		std::freopen("CONOUT$", "w", stderr);
+	}
 }
 
 } // namespace
 
 int main(int argc, char **argv)
 {
+	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+	if (argc <= 1 || std::string(argv[1]) == "--demarrage") {
+		const int code = run_ui(argc > 1);
+		shutdown_log();
+		return code;
+	}
+
+	attach_console();
 	SetConsoleOutputCP(CP_UTF8);
 	SetConsoleCtrlHandler(on_console_event, TRUE);
-	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
 	Args args;
 	if (!parse_args(argc, argv, args)) {
@@ -228,10 +252,14 @@ int main(int argc, char **argv)
 	int code = 0;
 	if (args.list)
 		print_lists();
+	else if (args.search)
+		print_senders();
+	else if (!args.pair_address.empty())
+		code = run_pairing(args);
 	else if (args.banc)
 		code = run_banc(args.output, args.banc_screen, args.duration_s);
 	else
-		code = run_sender(args);
+		code = run_console(args);
 	shutdown_log();
 	return code;
 }

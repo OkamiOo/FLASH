@@ -1,5 +1,6 @@
 #include "connection.h"
 #include "audio_track.h"
+#include "directory.h"
 #include "measure.h"
 #include "video_track.h"
 
@@ -20,27 +21,51 @@ bool is_video(flash::Codec c)
 }
 } // namespace
 
-std::shared_ptr<Connection> Connection::get(const std::string &address, uint16_t port)
+std::shared_ptr<Connection> Connection::get(const Target &target)
 {
-	const std::string key = address + ":" + std::to_string(port);
+	const std::string key = target.key();
 	std::lock_guard lock(g_registry_mutex);
 	if (auto it = g_registry.find(key); it != g_registry.end()) {
 		if (auto existing = it->second.lock())
 			return existing;
 	}
-	std::shared_ptr<Connection> conn(new Connection(address, port));
+	std::shared_ptr<Connection> conn(new Connection(target));
 	g_registry[key] = conn;
 	return conn;
 }
 
-Connection::Connection(std::string address, uint16_t port) : address_(std::move(address)), port_(port)
+Connection::Connection(const Target &target) : target_(target), label_(target.key())
 {
 	flash::SrtOptions options;
-	options.address = address_;
-	options.port = port_;
+	options.address = target_.address;
+	options.port = target_.port;
+	options.latency_ms = target_.latency_ms;
+	options.refresh = [this](flash::SrtOptions &o) { return refresh(o); };
 	receiver_.start(
 		options, [this](const std::vector<flash::TsStream> &streams) { on_streams(streams); },
 		[this](const flash::MediaPacket &pkt) { on_packet(pkt); }, [this](bool connected) { on_state(connected); });
+}
+
+// Avant chaque tentative de connexion : où est l'émetteur, et avec quelle clé
+bool Connection::refresh(flash::SrtOptions &o)
+{
+	o.stream_id = directory::self_id();
+	if (target_.sender_id.empty())
+		return true;
+
+	const auto found = directory::find(target_.sender_id, failures_ > 0);
+	if (!found) {
+		if (failures_++ == 0)
+			FLOG_I("Émetteur %s introuvable sur le réseau pour l'instant", target_.sender_id.c_str());
+		return false;
+	}
+	label_ = found->name;
+	o.address = found->address;
+	o.port = found->srt_port;
+	const auto paired = directory::paired_with(target_.sender_id);
+	o.passphrase = paired ? paired->key : "";
+	failures_ = 0;
+	return true;
 }
 
 Connection::~Connection()
@@ -59,10 +84,10 @@ uint64_t Connection::video_interval_ns()
 	return 1'000'000'000ULL * ovi.fps_den / ovi.fps_num;
 }
 
-void Connection::add_source(obs_source_t *source, bool video, int track)
+void Connection::add_source(obs_source_t *source, bool video, int track, const std::string &name)
 {
 	std::lock_guard lock(mutex_);
-	subs_.push_back({source, video, track});
+	subs_.push_back({source, video, track, name});
 	rebind();
 }
 
@@ -91,14 +116,26 @@ void Connection::rebind()
 	std::map<uint16_t, flash::Codec> codecs;
 
 	for (const Subscription &sub : subs_) {
+		// Par nom d'abord (stable si l'émetteur change ses sources), sinon par numéro
+		const flash::TsStream *chosen = nullptr;
 		int n = 0;
 		for (const flash::TsStream &st : streams_) {
-			const bool match = sub.video ? is_video(st.codec) : st.codec == flash::Codec::Opus;
-			if (match && ++n == sub.track) {
-				(sub.video ? want_video : want_audio)[st.pid].push_back(sub.source);
-				codecs[st.pid] = st.codec;
+			if (sub.video ? !is_video(st.codec) : st.codec != flash::Codec::Opus)
+				continue;
+			n++;
+			auto it = names_.find(st.pid);
+			if (!sub.name.empty() && it != names_.end() && _stricmp(it->second.c_str(), sub.name.c_str()) == 0) {
+				chosen = &st;
 				break;
 			}
+			if (sub.name.empty() && n == sub.track) {
+				chosen = &st;
+				break;
+			}
+		}
+		if (chosen) {
+			(sub.video ? want_video : want_audio)[chosen->pid].push_back(sub.source);
+			codecs[chosen->pid] = chosen->codec;
 		}
 	}
 
@@ -145,14 +182,17 @@ void Connection::on_meta(std::span<const uint8_t> data)
 	if (!j.is_object() || !j.contains("pistes") || !j["pistes"].is_array())
 		return;
 	std::string line;
+	names_.clear();
 	for (const auto &t : j["pistes"]) {
 		if (!t.is_object())
 			continue;
 		const std::string type = t.value("type", "");
+		names_[(uint16_t)t.value("pid", 0)] = t.value("nom", "");
 		line += (line.empty() ? "" : ", ") + std::string(type == "video" ? "vidéo" : "son") + " « " +
 			t.value("nom", "?") + " »";
 	}
-	FLOG_I("%s:%u, émetteur « %s » : %s", address_.c_str(), port_, j.value("nom", "?").c_str(), line.c_str());
+	FLOG_I("Émetteur « %s » : %s", j.value("nom", "?").c_str(), line.c_str());
+	rebind();
 }
 
 void Connection::on_streams(const std::vector<flash::TsStream> &streams)
@@ -164,7 +204,7 @@ void Connection::on_streams(const std::vector<flash::TsStream> &streams)
 		videos += is_video(st.codec);
 		sounds += st.codec == flash::Codec::Opus;
 	}
-	FLOG_I("%s:%u : %d vidéo(s), %d son(s)", address_.c_str(), port_, videos, sounds);
+	FLOG_I("%s : %d vidéo(s), %d son(s)", label_.c_str(), videos, sounds);
 	rebind();
 }
 

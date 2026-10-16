@@ -200,8 +200,25 @@ void VideoTrack::schedule(AVFrame *frame, const Packet &pkt, uint64_t decoded_ns
 	// L'image est remise au milieu de l'intervalle qui précède ce rendu : ni trop tôt
 	// (elle passerait au rendu d'avant), ni trop près du rendu lui-même.
 	uint64_t display = target > tick ? tick + (target - tick + interval - 1) / interval * interval : tick;
+
+	// Heure visée à la frontière entre deux rendus : on garde le côté choisi pour l'image
+	// précédente tant qu'on reste à moins de 1,5 ms de la frontière, sinon la moindre gigue
+	// fait alterner les images entre deux rendus. Au-delà, on bascule une seule fois.
+	const int64_t d = (int64_t)(display - target);
+	if (have_prev_) {
+		const int64_t span = (int64_t)interval;
+		int64_t best = d;
+		for (const int64_t cand : {d - span, d + span}) {
+			if (cand >= -(int64_t)kGuardNs && cand < span + (int64_t)kGuardNs &&
+			    std::llabs(cand - prev_d_) < std::llabs(best - prev_d_))
+				best = cand;
+		}
+		display = (uint64_t)((int64_t)target + best);
+	}
 	while (display < now + kGuardNs)
 		display += interval;
+	prev_d_ = (int64_t)(display - target);
+	have_prev_ = true;
 	uint64_t release = display - interval / 2;
 	if (release < now)
 		release = now;

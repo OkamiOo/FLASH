@@ -75,6 +75,8 @@ public:
 
 	size_t client_count() const;
 	std::vector<TrackStats> stats(); // remet les compteurs à zéro
+	// Liste JSON des pistes (pid, type, nom), pour les métadonnées et l'annonce de découverte
+	std::string tracks_json() const;
 
 private:
 	struct VideoTrack;

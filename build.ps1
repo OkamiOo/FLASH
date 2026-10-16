@@ -1,10 +1,11 @@
-# Compilation de FLASH (Release).
+﻿# Compilation de FLASH (Release).
 # Le projet est compilé depuis un lecteur virtuel pour que les binaires ne contiennent
 # aucun chemin de la machine.
 param(
     [string]$Drive = "X:",
     [switch]$Clean,
-    [switch]$TestObs   # copie le plugin dans l'OBS portable de test (.test-obs)
+    [switch]$TestObs,  # copie le plugin dans l'OBS portable de test (.test-obs)
+    [string[]]$Cibles  # cibles en plus (outils d'essai)
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +37,10 @@ try {
     if ($LASTEXITCODE) { throw "échec de la configuration" }
     cmake --build $bld
     if ($LASTEXITCODE) { throw "échec de la compilation" }
+    foreach ($c in $Cibles) {
+        cmake --build $bld --target $c
+        if ($LASTEXITCODE) { throw "échec de la compilation de $c" }
+    }
 } finally {
     Pop-Location
 }

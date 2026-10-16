@@ -48,3 +48,5 @@ target_compile_options(opus PRIVATE "/d1trimfile:${_opus_prefix}")
 add_subdirectory(core)
 add_subdirectory(app)
 add_subdirectory(obs)
+
+add_subdirectory(tools)

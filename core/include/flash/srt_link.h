@@ -8,6 +8,8 @@
 #include <thread>
 #include <vector>
 
+struct sockaddr;
+
 // Transport SRT de FLASH. L'émetteur écoute, les récepteurs l'appellent. Une seule
 // connexion par couple émetteur/récepteur porte toutes les pistes, dans les deux sens.
 
@@ -19,7 +21,14 @@ struct SrtOptions {
 	int latency_ms = 20;
 	int peer_idle_ms = 1500; // coupure détectée en 1,5 s : reconnexion rapide
 	std::string passphrase;  // vide = sans chiffrement (boucle locale de test)
-	std::string stream_id;
+	std::string stream_id;   // identifiant du récepteur
+
+	// Émetteur : décide pour chaque récepteur (selon son identifiant) s'il est admis et avec
+	// quelle phrase secrète. Absent : tout le monde, sans chiffrement.
+	std::function<bool(const std::string &stream_id, std::string &passphrase)> authorize;
+	// Récepteur : appelé avant chaque tentative de connexion pour mettre à jour l'adresse et
+	// la phrase secrète (émetteur qui a changé d'adresse…). Faux : on attend et on réessaie.
+	std::function<bool(SrtOptions &options)> refresh;
 };
 
 // Initialise libsrt une fois par processus. Dans OBS, libsrt est partagée avec OBS :
@@ -63,7 +72,9 @@ private:
 
 	void run();
 	void drop_client(int sock);
+	static int listen_hook(void *self, int sock, int hs_version, const ::sockaddr *peer, const char *stream_id);
 
+	SrtOptions options_;
 	OnJoin on_join_;
 	OnMessage on_message_;
 	int listener_ = -1;

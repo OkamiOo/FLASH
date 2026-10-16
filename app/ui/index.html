@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>FLASH</title>
+<style>
+:root {
+  --fond: #f4f5f7; --carte: #ffffff; --texte: #1d2129; --discret: #6b7280; --bord: #e2e5ea;
+  --accent: #e8590c; --accent-texte: #ffffff; --ok: #2f9e44; --alerte: #c92a2a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fond: #16181c; --carte: #1f2228; --texte: #e8eaed; --discret: #9aa0a8; --bord: #2e333b;
+    --accent: #ff7a2f; --accent-texte: #16181c; --ok: #51cf66; --alerte: #ff6b6b;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; background: var(--fond); color: var(--texte);
+  user-select: none;
+}
+header {
+  display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--bord);
+  background: var(--carte);
+}
+header h1 { margin: 0; font-size: 20px; letter-spacing: 2px; }
+header .pc { color: var(--discret); }
+.etat { margin-left: auto; padding: 4px 12px; border-radius: 999px; background: var(--fond); color: var(--discret); }
+.etat.actif { color: var(--ok); }
+main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px 24px; }
+section { background: var(--carte); border: 1px solid var(--bord); border-radius: 8px; padding: 16px; }
+section + section { margin-top: 16px; }
+h2 { margin: 0 0 12px; font-size: 15px; }
+h3 { margin: 16px 0 6px; font-size: 13px; color: var(--discret); font-weight: 600; }
+label.choix { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+label.choix small { color: var(--discret); }
+.piste { margin-left: auto; color: var(--discret); font-variant-numeric: tabular-nums; }
+.vide { color: var(--discret); font-style: italic; }
+button {
+  font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--bord); background: var(--carte);
+  color: var(--texte); cursor: pointer;
+}
+button.principal { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+select { font: inherit; padding: 5px; border-radius: 6px; border: 1px solid var(--bord); background: var(--carte); color: var(--texte); max-width: 100%; }
+.code {
+  font: 600 28px/1.2 Consolas, "Cascadia Mono", monospace; letter-spacing: 3px; text-align: center;
+  padding: 12px; margin: 8px 0 12px; border: 1px dashed var(--bord); border-radius: 8px; user-select: text;
+}
+.aide { color: var(--discret); font-size: 13px; margin: 0 0 8px; }
+.ligne { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--bord); }
+.ligne:first-child { border-top: 0; }
+.ligne span { flex: 1; }
+.barre { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.reglage { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FLASH</h1>
+  <span class="pc" id="pc"></span>
+  <span class="etat" id="etat">Personne ne reçoit</span>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Ce que j'envoie</h2>
+      <h3>Écrans</h3>
+      <div id="ecrans"></div>
+      <h3>Fenêtres</h3>
+      <div id="fenetres"></div>
+      <div class="reglage">
+        <select id="nouvelle-fenetre"></select>
+        <button id="ajouter-fenetre">Ajouter</button>
+      </div>
+      <h3>Son</h3>
+      <div id="sons"></div>
+      <div class="barre">
+        <button id="annuler" disabled>Annuler</button>
+        <button id="appliquer" class="principal" disabled>Appliquer</button>
+      </div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>Code d'invitation</h2>
+      <p class="aide">À saisir une fois dans la source FLASH d'OBS, sur le PC qui reçoit.</p>
+      <div class="code" id="code">····-····</div>
+      <div class="barre"><button id="nouveau-code">Nouveau code</button></div>
+    </section>
+    <section>
+      <h2>PC autorisés à recevoir</h2>
+      <div id="recepteurs"></div>
+    </section>
+    <section>
+      <h2>Réglages</h2>
+      <div class="reglage"><span>Qualité</span>
+        <select id="qualite">
+          <option value="12000">Économie (12 Mb/s)</option>
+          <option value="25000">Haute (25 Mb/s)</option>
+          <option value="50000">Très haute (50 Mb/s)</option>
+        </select></div>
+      <div class="reglage"><span>Format</span>
+        <select id="format">
+          <option value="h264">H.264 (le plus compatible)</option>
+          <option value="hevc">HEVC (meilleure image)</option>
+        </select></div>
+      <div class="reglage"><span>Réseau</span>
+        <select id="reseau">
+          <option value="0.0.0.0">Réseau local</option>
+          <option value="127.0.0.1">Ce PC seulement</option>
+        </select></div>
+      <div class="reglage"><span>Connexion</span>
+        <select id="latence">
+          <option value="20">Câble (20 ms)</option>
+          <option value="60">Wi-Fi (60 ms)</option>
+          <option value="200">Internet (200 ms)</option>
+        </select></div>
+      <label class="choix"><input type="checkbox" id="demarrage"> Lancer FLASH avec Windows</label>
+    </section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const envoyer = (action, donnees = {}) => window.chrome.webview.postMessage({ action, ...donnees });
+
+let listes = { ecrans: [], fenetres: [], applis: [], micros: [] };
+let choisies = [];      // sources telles qu'elles tournent
+let brouillon = [];     // sources cochées, pas encore appliquées
+
+const cle = s => s.type + "|" + (s.valeur || "");
+const memes = (a, b) => a.length === b.length && a.every((s, i) => cle(s) === cle(b[i]));
+const contient = (s) => brouillon.some(b => cle(b) === cle(s));
+
+function basculer(source, coche) {
+  brouillon = brouillon.filter(b => cle(b) !== cle(source));
+  if (coche) brouillon.push(source);
+  majBoutons();
+}
+
+function majBoutons() {
+  const change = !memes(brouillon, choisies);
+  $("appliquer").disabled = !change;
+  $("annuler").disabled = !change;
+}
+
+function caseSource(source, titre, detail, nomPiste = titre) {
+  const l = document.createElement("label");
+  l.className = "choix";
+  const c = document.createElement("input");
+  c.type = "checkbox";
+  c.checked = contient(source);
+  c.onchange = () => basculer(source, c.checked);
+  l.append(c, document.createTextNode(titre));
+  if (detail) { const d = document.createElement("small"); d.textContent = detail; l.append(d); }
+  const p = document.createElement("span");
+  p.className = "piste";
+  p.dataset.nom = nomPiste;
+  l.append(p);
+  return l;
+}
+
+function dessinerSources() {
+  const ecrans = $("ecrans");
+  ecrans.replaceChildren(...listes.ecrans.map(e =>
+    caseSource({ type: "ecran", valeur: String(e.numero) }, "Écran " + e.numero,
+               e.largeur + "×" + e.hauteur + ", " + e.hz + " Hz" + (e.principal ? ", principal" : ""))));
+
+  const fen = brouillon.filter(s => s.type === "fenetre");
+  $("fenetres").replaceChildren(...(fen.length ? fen.map(s => caseSource(s, s.valeur)) :
+    [Object.assign(document.createElement("div"), { className: "vide", textContent: "Aucune fenêtre" })]));
+  const menu = $("nouvelle-fenetre");
+  menu.replaceChildren(...listes.fenetres.map(f => {
+    const o = document.createElement("option");
+    o.value = f.exe;
+    o.textContent = f.titre + " (" + f.exe + ")";
+    return o;
+  }));
+
+  const sons = [];
+  for (const a of listes.applis)
+    sons.push(caseSource({ type: "appli", valeur: a.exe }, a.exe.replace(/\.exe$/i, ""), a.joue ? "joue du son" : ""));
+  for (const s of brouillon.filter(s => s.type === "appli" && !listes.applis.some(a => a.exe === s.valeur)))
+    sons.push(caseSource(s, s.valeur.replace(/\.exe$/i, ""), "pas lancée"));
+  sons.push(caseSource({ type: "systeme", valeur: "" }, "Tout le son du PC", "sauf FLASH", "Son du système"));
+  for (const m of listes.micros)
+    sons.push(caseSource({ type: "micro", valeur: m }, m, "", "Micro " + m));
+  $("sons").replaceChildren(...sons);
+}
+
+function dessinerEtat(e) {
+  $("pc").textContent = e.nom;
+  $("code").textContent = e.code;
+  const n = e.connectes;
+  $("etat").textContent = n ? (n === 1 ? "1 PC reçoit" : n + " PC reçoivent") : "Personne ne reçoit";
+  $("etat").classList.toggle("actif", n > 0);
+  for (const p of document.querySelectorAll(".piste")) p.textContent = "";
+  for (const t of e.pistes) {
+    const p = [...document.querySelectorAll(".piste")].find(x => x.dataset.nom.toLowerCase() === t.nom.toLowerCase());
+    if (!p) continue;
+    p.textContent = !t.active ? "en pause" : t.video ? Math.round(t.ips) + " i/s, " + (t.kbps / 1000).toFixed(1) + " Mb/s"
+                                           : Math.round(t.kbps) + " kb/s";
+  }
+  const r = $("recepteurs");
+  r.replaceChildren(...(e.recepteurs.length ? e.recepteurs.map(x => {
+    const d = document.createElement("div");
+    d.className = "ligne";
+    const n = document.createElement("span");
+    n.textContent = x.nom;
+    const b = document.createElement("button");
+    b.textContent = "Retirer";
+    b.onclick = () => envoyer("retirer", { id: x.id });
+    d.append(n, b);
+    return d;
+  }) : [Object.assign(document.createElement("div"), { className: "vide", textContent: "Aucun pour l'instant" })]));
+}
+
+function dessinerReglages(r) {
+  $("qualite").value = String(r.debit);
+  $("format").value = r.hevc ? "hevc" : "h264";
+  $("reseau").value = r.adresse;
+  $("latence").value = String(r.latence);
+  $("demarrage").checked = r.demarrage;
+}
+
+function reglagesModifies() {
+  envoyer("reglages", {
+    debit: Number($("qualite").value), hevc: $("format").value === "hevc", adresse: $("reseau").value,
+    latence: Number($("latence").value), demarrage: $("demarrage").checked
+  });
+}
+for (const id of ["qualite", "format", "reseau", "latence", "demarrage"]) $(id).onchange = reglagesModifies;
+
+$("ajouter-fenetre").onclick = () => {
+  const v = $("nouvelle-fenetre").value;
+  if (v && !contient({ type: "fenetre", valeur: v })) { brouillon.push({ type: "fenetre", valeur: v }); dessinerSources(); majBoutons(); }
+};
+$("appliquer").onclick = () => { envoyer("appliquer", { sources: brouillon }); };
+$("annuler").onclick = () => { brouillon = choisies.map(s => ({ ...s })); dessinerSources(); majBoutons(); };
+$("nouveau-code").onclick = () => envoyer("nouveau_code");
+
+window.chrome.webview.addEventListener("message", ev => {
+  const m = ev.data;
+  if (m.type === "listes") {
+    listes = m;
+    choisies = m.sources;
+    if (!m.garder) brouillon = choisies.map(s => ({ ...s }));
+    dessinerSources();
+    dessinerReglages(m.reglages);
+    majBoutons();
+  } else if (m.type === "etat") {
+    dessinerEtat(m);
+  }
+});
+document.addEventListener("contextmenu", e => e.preventDefault());
+envoyer("pret");
+</script>
+</body>
+</html>

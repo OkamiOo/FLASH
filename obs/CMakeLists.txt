@@ -32,6 +32,7 @@ set_target_properties(flash::obs PROPERTIES
 add_library(flash-obs MODULE
   audio_track.cpp
   connection.cpp
+  directory.cpp
   measure.cpp
   plugin.cpp
   sources.cpp

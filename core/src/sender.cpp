@@ -323,9 +323,9 @@ void Sender::housekeeping()
 	}
 }
 
-std::string Sender::metadata() const
+std::string Sender::tracks_json() const
 {
-	std::string m = "{\"v\":1,\"nom\":\"" + json_escape(options_.host_name) + "\",\"pistes\":[";
+	std::string m = "[";
 	bool first = true;
 	for (const auto &t : video_) {
 		m += (first ? "" : ",") + std::string("{\"pid\":") + std::to_string(t->pid) +
@@ -338,7 +338,12 @@ std::string Sender::metadata() const
 		     ",\"type\":\"audio\",\"nom\":\"" + json_escape(t->stats.name) + "\"}";
 		first = false;
 	}
-	return m + "]}";
+	return m + "]";
+}
+
+std::string Sender::metadata() const
+{
+	return "{\"v\":1,\"nom\":\"" + json_escape(options_.host_name) + "\",\"pistes\":" + tracks_json() + "}";
 }
 
 std::vector<TrackStats> Sender::stats()

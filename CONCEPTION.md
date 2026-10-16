@@ -379,3 +379,38 @@ Enseignements :
   couper aussi plus tard pour ne rien consommer au repos.
 
 Reste pour cette étape : un essai d'endurance de 4 h, quand le PC est libre assez longtemps.
+
+## 13. Étape (c) : interface, découverte, appairage
+
+Fait :
+
+- Appli fenêtrée (WebView2) avec une icône dans la zone de notification : fermer la fenêtre
+  n'arrête pas l'envoi, une seule instance à la fois, démarrage avec Windows au choix. On y
+  coche les écrans, fenêtres, applis, le son du système et les micros ; on y voit le code
+  d'invitation, les PC autorisés et les réglages (qualité, format, réseau, connexion).
+- Identité, sources et réglages dans `%APPDATA%\FLASH\reglages.json` ; clés des récepteurs
+  chiffrées par DPAPI.
+- Découverte (UDP 9711) : question en diffusion, en multicast et à 127.0.0.1, réponse directe
+  avec le nom du PC, les ports et les pistes.
+- Appairage CPace sur X25519 (Monocypher), TCP 9712 : code de 8 caractères (base 32 de
+  Crockford, saisie tolérante : minuscules, sans tiret, O pour 0), 5 essais par minute, clé de
+  256 bits par couple émetteur/récepteur.
+- SRT : l'émetteur choisit la phrase secrète d'après l'identifiant du récepteur et refuse les
+  inconnus ; flux en AES-256. Un mode « ouvert » (`--libre`) sert aux essais.
+- Plugin : émetteurs détectés et appairés dans une liste, adresse à saisir en secours, bouton
+  Appairer, piste choisie par son nom, réglage de connexion. L'émetteur est retrouvé par son
+  identifiant même s'il change d'adresse.
+- Choix du rendu OBS avec une hystérésis de 1,5 ms : une heure visée à la frontière entre deux
+  rendus ne fait plus alterner les images (latence bimodale vue avant ce correctif).
+
+Vérifié en boucle locale : découverte ; mauvais code refusé ; appairage réussi, y compris avec
+le code tapé en minuscules sans tiret ; connexion SRT refusée sans clé ; flux chiffré de bout en
+bout jusqu'à l'OBS de test, pistes choisies par nom (latence 39 à 45 ms selon la session,
+synchro -0,4 à -0,7 ms) ; affichage de l'interface et logique de la page.
+
+Reste pour cette étape :
+
+- la visionneuse de l'appli (recevoir sans OBS) ;
+- les essais en réseau réel : au premier lancement en « Réseau local », Windows demandera
+  l'autorisation du pare-feu (l'installeur ajoutera la règle) ;
+- un passage à la main dans les propriétés des sources FLASH d'OBS.

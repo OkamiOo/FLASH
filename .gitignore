@@ -16,7 +16,7 @@ CMakeUserPresets.json
 !README.md
 !CONCEPTION.md
 !LICENSE.md
-!third_party/**/*.md
+!third_party/**/LICEN?E.md
 .*
 !.gitignore
 !.gitattributes

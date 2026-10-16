@@ -1,0 +1,92 @@
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+// Transport SRT de FLASH. L'émetteur écoute, les récepteurs l'appellent. Une seule
+// connexion par couple émetteur/récepteur porte toutes les pistes, dans les deux sens.
+
+namespace flash {
+
+struct SrtOptions {
+	std::string address = "127.0.0.1";
+	uint16_t port = 9710;
+	int latency_ms = 20;
+	int peer_idle_ms = 1500; // coupure détectée en 1,5 s : reconnexion rapide
+	std::string passphrase;  // vide = sans chiffrement (boucle locale de test)
+	std::string stream_id;
+};
+
+// Initialise libsrt une fois par processus. Dans OBS, libsrt est partagée avec OBS :
+// on ne touche ni à son journal ni à son nettoyage.
+void srt_init(bool own_logging);
+
+struct SrtLinkStats {
+	double rtt_ms = 0;
+	double mbps = 0;
+	int64_t lost = 0;
+	int64_t dropped = 0;
+	int64_t retransmitted = 0;
+};
+
+class SrtServer {
+public:
+	using OnJoin = std::function<void(int client)>;
+	using OnMessage = std::function<void(int client, const uint8_t *data, size_t size)>;
+
+	~SrtServer();
+
+	bool start(const SrtOptions &options, OnJoin on_join, OnMessage on_message);
+	void stop();
+
+	// Envoie le même message à chaque récepteur. Un récepteur dont le tampon est plein
+	// perd ce message sans freiner les autres.
+	void send(const uint8_t *data, size_t size);
+	size_t client_count() const;
+
+private:
+	void run();
+	void drop_client(int sock);
+
+	OnJoin on_join_;
+	OnMessage on_message_;
+	int listener_ = -1;
+	int epoll_ = -1;
+	std::atomic<bool> running_{false};
+	std::thread thread_;
+	mutable std::mutex mutex_;
+	std::vector<int> clients_;
+};
+
+class SrtClient {
+public:
+	using OnData = std::function<void(const uint8_t *data, size_t size, uint64_t arrival_ns)>;
+	using OnState = std::function<void(bool connected)>;
+
+	~SrtClient();
+
+	void start(const SrtOptions &options, OnData on_data, OnState on_state);
+	void stop();
+
+	bool send(const uint8_t *data, size_t size);
+	bool connected() const { return connected_; }
+	SrtLinkStats stats();
+
+private:
+	void run();
+
+	SrtOptions options_;
+	OnData on_data_;
+	OnState on_state_;
+	std::atomic<bool> running_{false};
+	std::atomic<bool> connected_{false};
+	std::atomic<int> sock_{-1};
+	std::thread thread_;
+};
+
+} // namespace flash

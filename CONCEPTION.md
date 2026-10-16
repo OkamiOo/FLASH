@@ -287,3 +287,42 @@ aucun code GPL, le plugin restant sous GPL-3.0. À trancher avant la première d
 - Loopback par processus : Windows 10 2004 au minimum.
 - Wi-Fi : latence SRT relevée automatiquement, objectifs du § 1 valables en filaire.
 - Binaires non signés : avertissement SmartScreen au premier lancement chez les autres.
+- Les DLL de SRT et de FFmpeg livrées avec OBS dépendent du redistribuable Visual C++ :
+  l'installeur devra l'inclure, ou l'appli compilera libsrt elle-même en CRT statique.
+
+## 11. Mesures de l'étape (a)
+
+Boucle locale (127.0.0.1), mire 1080p60 + bip, NVENC H.264 25 Mb/s, Opus 10 ms, latence SRT
+20 ms, OBS 32.2.2 portable. Mesures du plugin (`tools/essai-boucle.ps1`, `tools/analyse_mesure.py`),
+essai de 5 minutes :
+
+| Critère | Mesure |
+|---|---|
+| Images | 17 992 reçues, aucune perdue en route, 2 non affichées au démarrage |
+| Capture -> réception (encodage + SRT) | 23,3 ms (99 % sous 25,2 ms) |
+| Réception -> image décodée et copiée | 1,8 ms (99 % sous 2,2 ms) |
+| Décalage d'horloge (heure de présentation) | 37,1 ms, stable |
+| Latence capture -> image composée par OBS | 37,7 à 49,5 ms selon les sessions, constante dans une session |
+| Écart son/image | -0,4 ms en moyenne, écart-type 0,1 ms, dérive non mesurable sur 5 min |
+| Charge | envoi 0,2 % du CPU, OBS de test entier 1,2 % ; GPU : encodeur 7 %, décodeur 6 % |
+
+Vérification indépendante sur un enregistrement d'OBS (`tools/analyse_enregistrement.py`) :
+-0,26 ms avec x264, conforme au plugin.
+
+Enseignements :
+
+- Le décalage d'horloge est fixé par le son : trame de 10 ms + retard d'Opus 2,5 ms + SRT 20 ms.
+  La vidéo est prête 12 ms plus tôt et attend. Leviers pour la médiane de 40 ms : latence SRT à
+  15 ms en filaire (réglage des deux côtés : SRT retient la plus grande des deux), trames son
+  plus courtes si la capture le permet.
+- Une image est montrée au premier rendu d'OBS qui suit son heure de présentation : la latence
+  varie donc d'une session à l'autre de 0 à 16,7 ms selon le calage entre les images de
+  l'émetteur et les rendus d'OBS. Viser le rendu le plus proche fait perdre des images quand
+  OBS encode lui-même en NVENC (le GPU partagé retarde une image sur trois).
+- Aucune écriture de fichier dans un fil temps réel : un journal écrit au mauvais moment a
+  bloqué l'émetteur 80 ms. Les journaux passent par un fil à part.
+- Avec un encodeur GPU (NVENC), OBS horodate chaque image avec l'heure du rendu précédent
+  (`output_gpu_encoders` dans `libobs/obs-video.c`) : dans un enregistrement ou un stream
+  NVENC, l'image de toute source paraît en avance d'une image sur le son (-16,7 ms à 60 i/s).
+  FLASH suit l'horloge d'OBS comme ses autres sources ; une compensation optionnelle pourra
+  être ajoutée.

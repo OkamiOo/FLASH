@@ -3,6 +3,7 @@
 #include "flash/log.h"
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 
 namespace flash {
@@ -99,6 +100,32 @@ void ClockMap::reset()
 	have_offset_ = false;
 }
 
+// ---------- CadenceSmoother ----------
+
+uint64_t CadenceSmoother::smooth(uint64_t pts)
+{
+	const bool restart = !last_raw_ || pts <= last_raw_ || pts - last_raw_ > 200'000'000ULL;
+	const double dt = restart ? 0.0 : (double)(pts - last_raw_);
+	last_raw_ = pts;
+	if (restart || period_ == 0) {
+		period_ = dt;
+		smoothed_ = (double)pts;
+		return pts;
+	}
+
+	// Nombre de périodes écoulées : une en temps normal, davantage si des images manquent
+	const double steps = std::max(1.0, std::round(dt / period_));
+	period_ += (dt / steps - period_) / 16;
+	const double predicted = smoothed_ + steps * period_;
+	const double err = (double)pts - predicted;
+	if (std::fabs(err) > period_ / 2) {
+		smoothed_ = (double)pts; // la source a changé de rythme : on repart d'elle
+		return pts;
+	}
+	smoothed_ = predicted + err / 8;
+	return (uint64_t)smoothed_;
+}
+
 // ---------- Receiver ----------
 
 Receiver::~Receiver()
@@ -146,6 +173,8 @@ void Receiver::start(const SrtOptions &options, OnStreams on_streams, OnPacket o
 			demux_.reset();
 			streams_.clear();
 			have_pts_ = false;
+			if (connected)
+				send_subscription();
 			if (on_state_)
 				on_state_(connected);
 		});
@@ -154,6 +183,30 @@ void Receiver::start(const SrtOptions &options, OnStreams on_streams, OnPacket o
 void Receiver::stop()
 {
 	client_.stop();
+}
+
+void Receiver::subscribe(std::vector<uint16_t> pids)
+{
+	{
+		std::lock_guard lock(sub_mutex_);
+		if (pids == subscription_)
+			return;
+		subscription_ = std::move(pids);
+	}
+	send_subscription();
+}
+
+void Receiver::send_subscription()
+{
+	std::vector<uint8_t> msg{control::kSubscribe};
+	{
+		std::lock_guard lock(sub_mutex_);
+		for (uint16_t pid : subscription_) {
+			msg.push_back((uint8_t)(pid >> 8));
+			msg.push_back((uint8_t)pid);
+		}
+	}
+	client_.send(msg.data(), msg.size());
 }
 
 void Receiver::request_keyframe(uint16_t pid)

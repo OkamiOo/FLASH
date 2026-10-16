@@ -81,12 +81,12 @@ bool enabled()
 }
 
 void frame(uint32_t n, uint64_t capture_ns, uint64_t arrival_ns, uint64_t decoded_ns, uint64_t release_ns,
-	   uint64_t key, bool flash)
+	   uint64_t key, bool flash, uint64_t pts_ns)
 {
 	if (enabled())
-		add("V,%u,%llu,%llu,%llu,%llu,%llu,%d\n", n, (unsigned long long)capture_ns,
+		add("V,%u,%llu,%llu,%llu,%llu,%llu,%d,%llu\n", n, (unsigned long long)capture_ns,
 		    (unsigned long long)arrival_ns, (unsigned long long)decoded_ns, (unsigned long long)release_ns,
-		    (unsigned long long)key, flash ? 1 : 0);
+		    (unsigned long long)key, flash ? 1 : 0, (unsigned long long)pts_ns);
 }
 
 struct Shown {

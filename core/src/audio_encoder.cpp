@@ -1,8 +1,9 @@
-#include "opus_encoder.h"
-
-#include <flash/log.h>
+#include "flash/audio_encoder.h"
+#include "flash/log.h"
 
 #include <opus.h>
+
+namespace flash {
 
 AudioEncoder::~AudioEncoder()
 {
@@ -36,3 +37,5 @@ bool AudioEncoder::encode(const float *samples, std::vector<uint8_t> &out)
 	out.resize((size_t)n);
 	return true;
 }
+
+} // namespace flash

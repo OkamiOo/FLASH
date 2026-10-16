@@ -5,6 +5,8 @@
 
 struct OpusEncoder;
 
+namespace flash {
+
 // Opus 48 kHz, trames de 10 ms, mode basse latence (CELT seul, 2,5 ms de retard).
 class AudioEncoder {
 public:
@@ -20,3 +22,5 @@ private:
 	OpusEncoder *enc_ = nullptr;
 	int lookahead_ = 0;
 };
+
+} // namespace flash

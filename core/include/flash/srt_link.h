@@ -44,12 +44,23 @@ public:
 	bool start(const SrtOptions &options, OnJoin on_join, OnMessage on_message);
 	void stop();
 
-	// Envoie le même message à chaque récepteur. Un récepteur dont le tampon est plein
-	// perd ce message sans freiner les autres.
+	// Envoie un message MPEG-TS aux récepteurs qui veulent sa piste (PID du premier paquet ;
+	// tables et horloge vont à tous). Un récepteur dont le tampon est plein perd ce message
+	// sans freiner les autres.
 	void send(const uint8_t *data, size_t size);
 	size_t client_count() const;
 
+	// Pistes demandées par un récepteur ; vide = toutes.
+	void set_subscription(int client, std::vector<uint16_t> pids);
+	// Vrai si au moins un récepteur connecté veut cette piste.
+	bool wanted(uint16_t pid) const;
+
 private:
+	struct Client {
+		int sock;
+		std::vector<uint16_t> pids;
+	};
+
 	void run();
 	void drop_client(int sock);
 
@@ -60,7 +71,7 @@ private:
 	std::atomic<bool> running_{false};
 	std::thread thread_;
 	mutable std::mutex mutex_;
-	std::vector<int> clients_;
+	std::vector<Client> clients_;
 };
 
 class SrtClient {

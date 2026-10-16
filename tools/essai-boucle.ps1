@@ -1,10 +1,17 @@
-# Essai en boucle locale : la mire de l'appli FLASH vers l'OBS portable de test (.test-obs),
-# avec le journal de mesure du plugin, puis analyse.
-# Ne touche jamais à l'OBS habituel : seul le processus lancé ici est arrêté, par son PID.
+# Essai en boucle locale : l'appli FLASH vers l'OBS portable de test (.test-obs), avec le
+# journal de mesure du plugin, puis analyse.
+# -Banc : au lieu de la mire, capture réelle de la fenêtre d'essai (WGC) et de son son
+# (loopback de l'application), comme pour un jeu.
+# Ne touche jamais à l'OBS habituel : seuls les processus lancés ici sont arrêtés, par PID.
 param(
     [int]$Duree = 60,
     [int]$Latence = 20,
-    [switch]$Enregistrer
+    [switch]$Enregistrer,
+    [string[]]$Sources = @("--mire"),
+    [switch]$Banc,
+    [int]$EcranBanc = 0,          # 0 = dernier écran
+    [string]$SortieBanc = "Steam Streaming Speakers",
+    [string]$Collection = "FlashTest"
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,9 +23,30 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $journal = Join-Path $out "mesure-$stamp.csv"
 
 $app = Join-Path $root "build\app\flash.exe"
-$sender = Start-Process -FilePath $app -ArgumentList "--mire", "--duree", ($Duree + 10), "--latence", $Latence `
+$bancProc = $null
+if ($Banc) {
+    # Le banc tourne sous un autre nom d'exécutable pour que son son soit désigné sans ambiguïté
+    $bancDir = Join-Path $out "banc"
+    New-Item -ItemType Directory -Force $bancDir | Out-Null
+    Copy-Item $app (Join-Path $bancDir "banc.exe") -Force
+    Copy-Item (Join-Path (Split-Path $app) "srt.dll") $bancDir -Force
+    $bancProc = Start-Process -FilePath (Join-Path $bancDir "banc.exe") `
+        -ArgumentList "--banc", "--sortie", "`"$SortieBanc`"", "--ecran", $EcranBanc, "--duree", ($Duree + 20) `
+        -WorkingDirectory $bancDir -RedirectStandardError (Join-Path $out "banc-$stamp.log") -WindowStyle Hidden -PassThru
+    Start-Sleep -Seconds 1
+    if (-not $PSBoundParameters.ContainsKey("Sources")) {
+        $Sources = @("--fenetre", "`"Banc FLASH`"", "--appli", "banc.exe")
+    }
+}
+$sender = Start-Process -FilePath $app -ArgumentList ($Sources + @("--duree", ($Duree + 10), "--latence", $Latence)) `
     -WorkingDirectory (Split-Path $app) -RedirectStandardError (Join-Path $out "envoi-$stamp.log") `
     -WindowStyle Hidden -PassThru
+
+# Collection de scènes de l'OBS de test (FlashTest : une vidéo et un son ; FlashMulti : trois et trois)
+$userIni = Join-Path $root ".test-obs\config\obs-studio\user.ini"
+$ini = (Get-Content $userIni) -replace "^SceneCollection=.*", "SceneCollection=$Collection" `
+    -replace "^SceneCollectionFile=.*", "SceneCollectionFile=$Collection"
+[IO.File]::WriteAllLines($userIni, $ini, (New-Object Text.UTF8Encoding $false))
 
 $env:FLASH_MESURE = $journal
 $obsArgs = @("--portable", "--multi", "--disable-shutdown-check", "--disable-updater")
@@ -62,6 +90,9 @@ if (-not $obs.HasExited) {
 }
 if (-not $sender.WaitForExit(20000)) {
     taskkill /F /FI "PID eq $($sender.Id)" /FI "IMAGENAME eq flash.exe" | Out-Null
+}
+if ($bancProc -and -not $bancProc.WaitForExit(15000)) {
+    taskkill /F /FI "PID eq $($bancProc.Id)" /FI "IMAGENAME eq banc.exe" | Out-Null
 }
 
 python -I (Join-Path $root "tools\analyse_mesure.py") $journal

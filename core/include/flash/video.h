@@ -42,5 +42,11 @@ public:
 };
 
 std::unique_ptr<VideoEncoder> create_nvenc_encoder(ID3D11Device *device, const VideoEncoderConfig &config);
+std::unique_ptr<VideoEncoder> create_mf_encoder(ID3D11Device *device, const VideoEncoderConfig &config);
+
+// NVENC si possible, sinon Media Foundation (matériel de la carte, puis logiciel).
+// preference : "auto", "nvenc", "mf" ou "logiciel" (encodeur logiciel de Windows seul).
+std::unique_ptr<VideoEncoder> create_video_encoder(ID3D11Device *device, const VideoEncoderConfig &config,
+						   const std::string &preference = "auto");
 
 } // namespace flash

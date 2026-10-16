@@ -1,24 +1,17 @@
-// FLASH : envoi. Pour l'instant, mode mire uniquement (étape de mesure en boucle locale).
+// FLASH : envoi en ligne de commande, en attendant l'interface.
 
-#include "mire_source.h"
-#include "opus_encoder.h"
+#include "banc.h"
 
 #include <flash/clock.h>
+#include <flash/inputs.h>
 #include <flash/log.h>
-#include <flash/mire.h>
-#include <flash/receiver.h>
-#include <flash/srt_link.h>
-#include <flash/ts.h>
-#include <flash/video.h>
+#include <flash/sender.h>
 
 #include <windows.h>
 
 #include <atomic>
-#include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <string>
-#include <thread>
 #include <vector>
 
 using namespace flash;
@@ -33,39 +26,121 @@ BOOL WINAPI on_console_event(DWORD)
 	return TRUE;
 }
 
+const char *kUsage = R"(Usage :
+  flash --liste                     écrans, fenêtres, applis qui jouent du son, micros
+  flash [sources] [réglages]        envoie les sources choisies
+  flash --banc [--sortie nom] [--ecran N]   fenêtre d'essai (image + bips) à capturer
+
+Sources (autant que voulu) :
+  --mire                 mire de mesure et son bip
+  --ecran N              écran N (1 = principal)
+  --fenetre texte        fenêtre dont l'exécutable ou le titre correspond
+  --appli nom.exe        son d'une application
+  --systeme              son de tout le système, sauf FLASH
+  --micro [nom]          micro (par défaut celui de Windows)
+
+Réglages :
+  --adresse ip           adresse d'écoute (127.0.0.1 par défaut)
+  --port N               port SRT (9710)
+  --debit kbps           débit vidéo par piste (25000)
+  --latence ms           latence SRT (20)
+  --taille LxH           taille maximale envoyée (1920x1080)
+  --hevc                 HEVC au lieu de H.264
+  --encodeur auto|nvenc|mf|logiciel   encodeur vidéo (auto : NVENC, sinon Media Foundation)
+  --sans-curseur         ne pas capturer le curseur
+  --duree s              s'arrêter au bout de s secondes
+)";
+
 struct Args {
-	bool mire = false;
-	std::string address = "127.0.0.1";
-	uint16_t port = 9710;
-	uint32_t bitrate_kbps = 25000;
-	int latency_ms = 20;
-	bool hevc = false;
+	bool list = false;
+	bool banc = false;
+	int banc_screen = 0; // 0 = dernier écran
+	std::string output;
+	std::vector<std::unique_ptr<VideoInput>> video;
+	std::vector<std::unique_ptr<AudioInput>> audio;
+	SenderOptions options;
+	uint32_t max_w = 1920, max_h = 1080;
+	bool cursor = true;
 	int duration_s = 0;
 };
 
 bool parse_args(int argc, char **argv, Args &a)
 {
+	// Les sources se créent après lecture de tous les réglages (taille, curseur)
+	struct Pending {
+		std::string kind, value;
+	};
+	std::vector<Pending> sources;
+
 	for (int i = 1; i < argc; i++) {
 		const std::string arg = argv[i];
-		auto next = [&]() -> const char * { return i + 1 < argc ? argv[++i] : ""; };
-		if (arg == "--mire")
-			a.mire = true;
+		auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
+		auto optional = [&]() -> std::string {
+			return (i + 1 < argc && argv[i + 1][0] != '-') ? argv[++i] : "";
+		};
+		if (arg == "--liste")
+			a.list = true;
+		else if (arg == "--banc")
+			a.banc = true;
+		else if (arg == "--sortie")
+			a.output = next();
+		else if (arg == "--mire" || arg == "--systeme")
+			sources.push_back({arg, ""});
+		else if (arg == "--ecran" || arg == "--fenetre" || arg == "--appli")
+			sources.push_back({arg, next()});
+		else if (arg == "--micro")
+			sources.push_back({arg, optional()});
 		else if (arg == "--adresse")
-			a.address = next();
+			a.options.srt.address = next();
 		else if (arg == "--port")
-			a.port = (uint16_t)std::atoi(next());
+			a.options.srt.port = (uint16_t)std::atoi(next().c_str());
 		else if (arg == "--debit")
-			a.bitrate_kbps = (uint32_t)std::atoi(next());
+			a.options.video_kbps = (uint32_t)std::atoi(next().c_str());
 		else if (arg == "--latence")
-			a.latency_ms = std::atoi(next());
-		else if (arg == "--hevc")
-			a.hevc = true;
+			a.options.srt.latency_ms = std::atoi(next().c_str());
+		else if (arg == "--taille") {
+			const std::string v = next();
+			if (std::sscanf(v.c_str(), "%ux%u", &a.max_w, &a.max_h) != 2)
+				return false;
+		} else if (arg == "--hevc")
+			a.options.codec = Codec::HEVC;
+		else if (arg == "--encodeur")
+			a.options.encoder = next();
+		else if (arg == "--sans-curseur")
+			a.cursor = false;
 		else if (arg == "--duree")
-			a.duration_s = std::atoi(next());
+			a.duration_s = std::atoi(next().c_str());
 		else
 			return false;
 	}
-	return a.mire;
+
+	// Avec --banc, --ecran désigne l'écran où ouvrir la fenêtre d'essai
+	if (a.banc) {
+		for (const Pending &s : sources)
+			if (s.kind == "--ecran")
+				a.banc_screen = std::atoi(s.value.c_str());
+		return true;
+	}
+
+	// La mire démarre sur une seconde pleine de l'horloge commune, comme le banc
+	const uint64_t t0 = (now_ns() / 1'000'000'000ULL + 1) * 1'000'000'000ULL;
+	for (const Pending &s : sources) {
+		if (s.kind == "--mire") {
+			a.video.push_back(make_mire_input(t0));
+			a.audio.push_back(make_beep_input(t0));
+		} else if (s.kind == "--ecran") {
+			a.video.push_back(make_screen_input(std::atoi(s.value.c_str()), a.max_w, a.max_h, a.cursor));
+		} else if (s.kind == "--fenetre") {
+			a.video.push_back(make_window_input(s.value, a.max_w, a.max_h, a.cursor));
+		} else if (s.kind == "--appli") {
+			a.audio.push_back(make_app_audio_input(s.value));
+		} else if (s.kind == "--systeme") {
+			a.audio.push_back(make_system_audio_input());
+		} else if (s.kind == "--micro") {
+			a.audio.push_back(make_mic_input(s.value));
+		}
+	}
+	return a.list || a.banc || !a.video.empty() || !a.audio.empty();
 }
 
 std::string host_name()
@@ -76,10 +151,26 @@ std::string host_name()
 	return name;
 }
 
-int run_mire(const Args &args)
+void print_lists()
+{
+	std::printf("Écrans :\n");
+	for (const ScreenInfo &s : list_screens())
+		std::printf("  %d : %dx%d à %d Hz en (%d, %d), %s%s\n", s.index, s.width, s.height, s.hz, s.x, s.y,
+			    s.adapter.c_str(), s.primary ? " (principal)" : "");
+	std::printf("Fenêtres :\n");
+	for (const WindowInfo &w : list_windows())
+		std::printf("  %-28s %s\n", w.exe.c_str(), w.title.c_str());
+	std::printf("Applis avec une session audio :\n");
+	for (const AudioAppInfo &a : list_audio_apps())
+		std::printf("  %-28s %s\n", a.exe.c_str(), a.playing ? "joue du son" : "silencieuse");
+	std::printf("Micros :\n");
+	for (const std::string &m : list_microphones())
+		std::printf("  %s\n", m.c_str());
+}
+
+int run_sender(Args &args)
 {
 	enable_precise_timers();
-	srt_init(true);
 
 	std::string gpu;
 	ComPtr<ID3D11Device> device = create_d3d11_device(&gpu);
@@ -87,135 +178,36 @@ int run_mire(const Args &args)
 		return 1;
 	FLOG_I("GPU : %s", gpu.c_str());
 
-	MireSource mire;
-	if (!mire.init(device.Get()))
+	args.options.host_name = host_name();
+	Sender sender;
+	if (!sender.start(args.options, device, std::move(args.video), std::move(args.audio)))
 		return 1;
+	FLOG_I("Envoi sur srt://%s:%u (Ctrl+C pour arrêter)", args.options.srt.address.c_str(), args.options.srt.port);
 
-	VideoEncoderConfig vc;
-	vc.width = mire::kWidth;
-	vc.height = mire::kHeight;
-	vc.fps_num = mire::kFps;
-	vc.bitrate_kbps = args.bitrate_kbps;
-	vc.codec = args.hevc ? Codec::HEVC : Codec::H264;
-	std::unique_ptr<VideoEncoder> encoder = create_nvenc_encoder(device.Get(), vc);
-	if (!encoder) {
-		FLOG_E("NVENC indisponible");
-		return 1;
-	}
-
-	AudioEncoder opus;
-	if (!opus.open(2, 192000))
-		return 1;
-
-	SrtServer server;
-	TsMuxer mux([&server](const uint8_t *data, size_t size) { server.send(data, size); });
-	mux.set_tracks({{ts::kPidVideo0, vc.codec}, {ts::kPidAudio0, Codec::Opus, 2}});
-
-	std::atomic<bool> want_idr{true};
-	std::atomic<uint64_t> last_idr_request{0};
-
-	SrtOptions so;
-	so.address = args.address;
-	so.port = args.port;
-	so.latency_ms = args.latency_ms;
-	const bool listening = server.start(
-		so,
-		[&](int) {
-			want_idr = true;
-			mux.write_tables();
-		},
-		[&](int, const uint8_t *data, size_t size) {
-			// Demande d'image clé : une toutes les 250 ms au plus
-			const uint64_t now = now_ns();
-			if (size >= 1 && data[0] == control::kKeyframeRequest && now - last_idr_request > 250'000'000) {
-				last_idr_request = now;
-				want_idr = true;
-			}
-		});
-	if (!listening)
-		return 1;
-
-	const std::string meta = "{\"v\":1,\"nom\":\"" + host_name() +
-				 "\",\"pistes\":[{\"pid\":256,\"type\":\"video\",\"nom\":\"Mire\"},"
-				 "{\"pid\":512,\"type\":\"audio\",\"nom\":\"Bip\"}]}";
-
-	const uint64_t t0 = now_ns() + 200'000'000ULL;
-	const uint64_t stop_at = args.duration_s > 0 ? t0 + (uint64_t)args.duration_s * 1'000'000'000ULL : 0;
-
-	std::thread audio([&] {
-		std::vector<float> buf((size_t)opus.frame_size() * 2);
-		std::vector<uint8_t> packet;
-		const double w = 2.0 * 3.14159265358979323846 * mire::kBeepHz / mire::kSampleRate;
-
-		for (uint64_t m = 0; g_running; m++) {
-			const uint64_t first = m * (uint64_t)opus.frame_size();
-			sleep_until_ns(t0 + (first + opus.frame_size()) * 1'000'000'000ULL / mire::kSampleRate);
-
-			for (int i = 0; i < opus.frame_size(); i++) {
-				const uint64_t phase = (first + i) % mire::kSampleRate;
-				const float v = phase < mire::kBeepSamples ? (float)(0.5 * std::sin(w * (double)phase)) : 0.0f;
-				buf[2 * i] = buf[2 * i + 1] = v;
-			}
-			if (!opus.encode(buf.data(), packet))
-				continue;
-
-			// Le PTS désigne le premier échantillon décodé : l'encodeur décale de son retard
-			const int64_t pts_samples = (int64_t)first - opus.lookahead();
-			const uint64_t pts = t0 + (uint64_t)(pts_samples * 1'000'000'000LL / (int64_t)mire::kSampleRate);
-			mux.write_audio(ts::kPidAudio0, pts, packet.data(), packet.size());
-
-			if (m % 2 == 0)
-				mux.write_pcr(now_ns());
-			if (m % 10 == 0)
-				mux.write_tables();
-			if (m % 100 == 0)
-				mux.write_meta(meta);
-		}
-	});
-
-	FLOG_I("Mire envoyée sur srt://%s:%u (Ctrl+C pour arrêter)", args.address.c_str(), args.port);
-
-	EncodedFrame frame;
-	uint64_t enc_total = 0, enc_max = 0, bytes = 0, late = 0;
-	uint32_t frames = 0;
-	uint64_t report_at = t0 + 5'000'000'000ULL;
-
-	for (uint32_t n = 0; g_running; n++) {
-		const uint64_t t = t0 + (uint64_t)n * 1'000'000'000ULL / mire::kFps;
-		if (stop_at && t >= stop_at)
+	const uint64_t start = now_ns();
+	uint64_t report = start + 5'000'000'000ULL;
+	while (g_running) {
+		Sleep(100);
+		const uint64_t now = now_ns();
+		if (args.duration_s > 0 && now - start >= (uint64_t)args.duration_s * 1'000'000'000ULL)
 			break;
-		sleep_until_ns(t);
-
-		ID3D11Texture2D *tex = mire.render(n, t);
-		if (!tex)
+		if (now < report)
 			continue;
-
-		const uint64_t e0 = now_ns();
-		if (!encoder->encode(tex, want_idr.exchange(false), frame))
-			continue;
-		const uint64_t e1 = now_ns();
-		mux.write_video(ts::kPidVideo0, t, frame.data.data(), frame.data.size(), frame.keyframe);
-
-		enc_total += e1 - e0;
-		enc_max = e1 - e0 > enc_max ? e1 - e0 : enc_max;
-		bytes += frame.data.size();
-		frames++;
-		if ((int64_t)(e0 - t) > 1'000'000)
-			late++;
-
-		if (e1 >= report_at) {
-			FLOG_I("%u images, encodage %.2f ms (max %.2f), %.1f Mb/s, %llu en retard, %zu récepteur(s)", frames,
-			       enc_total / 1e6 / frames, enc_max / 1e6, bytes * 8 / 5e6, (unsigned long long)late,
-			       server.client_count());
-			enc_total = enc_max = bytes = late = 0;
-			frames = 0;
-			report_at += 5'000'000'000ULL;
+		report += 5'000'000'000ULL;
+		std::string line = std::to_string(sender.client_count()) + " récepteur(s)";
+		for (const TrackStats &s : sender.stats()) {
+			char buf[160];
+			if (s.video)
+				std::snprintf(buf, sizeof(buf), " | %s : %.0f i/s (%.0f capturées, %llu clés), %.1f Mb/s, encodage %.2f ms (max %.2f)",
+					      s.name.c_str(), s.frames / 5.0, s.captured / 5.0, (unsigned long long)s.keyframes,
+					      s.bytes * 8 / 5e6, s.encode_ms_avg, s.encode_ms_max);
+			else
+				std::snprintf(buf, sizeof(buf), " | %s : %.0f kb/s", s.name.c_str(), s.bytes * 8 / 5e3);
+			line += s.active ? buf : " | " + s.name + " : en pause";
 		}
+		FLOG_I("%s", line.c_str());
 	}
-
-	g_running = false;
-	audio.join();
-	server.stop();
+	sender.stop();
 	return 0;
 }
 
@@ -225,14 +217,21 @@ int main(int argc, char **argv)
 {
 	SetConsoleOutputCP(CP_UTF8);
 	SetConsoleCtrlHandler(on_console_event, TRUE);
+	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
 	Args args;
 	if (!parse_args(argc, argv, args)) {
-		std::printf("Usage : flash --mire [--adresse 127.0.0.1] [--port 9710] [--debit 25000] [--latence 20] "
-			    "[--hevc] [--duree secondes]\n");
+		std::printf("%s", kUsage);
 		return 2;
 	}
-	const int code = run_mire(args);
+
+	int code = 0;
+	if (args.list)
+		print_lists();
+	else if (args.banc)
+		code = run_banc(args.output, args.banc_screen, args.duration_s);
+	else
+		code = run_sender(args);
 	shutdown_log();
 	return code;
 }

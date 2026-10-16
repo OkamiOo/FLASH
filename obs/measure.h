@@ -8,9 +8,10 @@ namespace measure {
 
 bool enabled();
 
-// Image décodée : numéro et heure de capture lus dans la mire, puis les étapes côté OBS.
+// Image décodée : numéro et heure de rendu lus dans la mire, horodatage de l'émetteur
+// (capture), puis les étapes côté OBS.
 void frame(uint32_t frame, uint64_t capture_ns, uint64_t arrival_ns, uint64_t decoded_ns, uint64_t release_ns,
-	   uint64_t key, bool flash);
+	   uint64_t key, bool flash, uint64_t pts_ns);
 // Image remise à une source, puis rendu d'OBS : l'image affichée à un rendu est la
 // dernière remise avant lui (source non tamponnée). On note le premier rendu de chaque image
 // sans rien prendre à OBS.

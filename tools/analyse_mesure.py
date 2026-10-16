@@ -41,8 +41,10 @@ def main():
             t = row[0]
             if t == "V":
                 n, cap, arr, dec, rel, key, flash = row[1:8]
+                # Horodatage de l'émetteur (capture) ; absent des anciens journaux : celui de la mire
+                pts = int(row[8]) if len(row) > 8 and row[8] else int(cap)
                 frames[int(key)] = dict(n=int(n), cap=int(cap), arr=int(arr), dec=int(dec), rel=int(rel),
-                                        flash=flash == "1")
+                                        flash=flash == "1", pts=int(pts))
             elif t == "D":
                 shown.setdefault(int(row[1]), int(row[2]))
             elif t == "B":
@@ -58,7 +60,7 @@ def main():
     keys = sorted(k for k, v in frames.items() if v["cap"] >= start)
     ms = lambda ns: ns / 1e6
 
-    total, transport, decode, attente, rendu = [], [], [], [], []
+    total, compo, transport, decode, attente, rendu = [], [], [], [], [], []
     jamais = 0
     for k in keys:
         v = frames[k]
@@ -67,7 +69,8 @@ def main():
             continue
         d = shown[k]
         total.append(ms(d - v["cap"]))
-        transport.append(ms(v["arr"] - v["cap"]))
+        compo.append(ms(v["pts"] - v["cap"]))
+        transport.append(ms(v["arr"] - v["pts"]))
         decode.append(ms(v["dec"] - v["arr"]))
         attente.append(ms(v["rel"] - v["dec"]))
         rendu.append(ms(d - v["rel"]))
@@ -78,34 +81,52 @@ def main():
 
     print(f"Durée analysée : {duree:.1f} s, {len(keys)} images reçues, {manquantes} perdues avant décodage, "
           f"{jamais} jamais affichées")
-    print("Latence image-à-image (ms), capture -> image composée par OBS :")
+    print("Latence image-à-image (ms), rendu -> image composée par OBS :")
     resume("total", total)
+    resume("rendu -> capture (composition Windows)", compo)
     resume("capture -> réception (encodage+SRT)", transport)
     resume("réception -> décodée", decode)
     resume("décodée -> remise à OBS", attente)
     resume("remise -> rendu OBS", rendu)
 
-    # Synchro : chaque flash affiché face au bip le plus proche
-    ecarts = []
-    flashes = sorted(shown[k] for k in keys if frames[k]["flash"] and k in shown)
-    for t in flashes:
+    # Synchro. Flashs et bips tombent sur des secondes pleines de l'horloge commune : pour
+    # chaque seconde, on prend la première image affichée avec le flash et le bip le plus
+    # proche. Écart brut, puis rapporté à l'heure de rendu du flash (retard de l'image sur
+    # la seconde pleine), puis à son horodatage de capture : ce dernier est la part due à FLASH.
+    premiers = {}
+    for k in keys:
+        v = frames[k]
+        if v["flash"] and k in shown:
+            g = v["cap"] // 1_000_000_000 * 1_000_000_000
+            if g not in premiers or shown[k] < shown[premiers[g]]:
+                premiers[g] = k
+    brut, vs_rendu, vs_capture, temps = [], [], [], []
+    for g, k in sorted(premiers.items()):
+        t = shown[k]
         if not beeps:
             break
         b = min(beeps, key=lambda x: abs(x - t))
         if abs(b - t) < 300e6:
-            ecarts.append((t, ms(t - b)))
+            v = frames[k]
+            temps.append(t)
+            brut.append(ms(t - b))
+            vs_rendu.append(ms(t - b - (v["cap"] - g)))
+            vs_capture.append(ms(t - b - (v["pts"] - g)))
+
+    def ligne(nom, vals):
+        print(f"  {nom:<30} moyenne {statistics.mean(vals):+6.2f}  écart-type {statistics.pstdev(vals):5.2f}  "
+              f"min {min(vals):+6.2f}  max {max(vals):+6.2f}  (n={len(vals)})")
+
     print("Synchro son/image (ms, positif = image en retard sur le son) :")
-    if ecarts:
-        vals = [e for _, e in ecarts]
-        print(f"  moyenne {statistics.mean(vals):+.2f}  écart-type {statistics.pstdev(vals):.2f}  "
-              f"min {min(vals):+.2f}  max {max(vals):+.2f}  (n={len(vals)})")
-        if len(ecarts) >= 10:
-            t0 = ecarts[0][0]
-            xs = [(t - t0) / 1e9 for t, _ in ecarts]
-            ys = vals
-            mx, my = statistics.mean(xs), statistics.mean(ys)
+    if brut:
+        ligne("brute", brut)
+        ligne("rapportée au rendu", vs_rendu)
+        ligne("rapportée à la capture", vs_capture)
+        if (temps[-1] - temps[0]) / 1e9 >= 120:
+            xs = [(t - temps[0]) / 1e9 for t in temps]
+            mx, my = statistics.mean(xs), statistics.mean(vs_capture)
             sxx = sum((x - mx) ** 2 for x in xs)
-            pente = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx else 0
+            pente = sum((x - mx) * (y - my) for x, y in zip(xs, vs_capture)) / sxx if sxx else 0
             print(f"  dérive : {pente * 3600:+.2f} ms par heure")
     else:
         print("  aucun couple flash/bip trouvé")

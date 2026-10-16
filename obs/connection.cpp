@@ -6,6 +6,8 @@
 #include <flash/clock.h>
 #include <flash/log.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 
 namespace {
@@ -117,6 +119,40 @@ void Connection::rebind()
 			track = std::make_unique<AudioTrack>(*this, pid);
 		track->set_sources(std::move(sources));
 	}
+
+	phase_pid = video_.empty() ? 0 : video_.begin()->first;
+
+	// L'émetteur n'envoie (et n'encode) que les pistes qu'on utilise. Aucune : PID nul.
+	std::vector<uint16_t> pids;
+	for (const auto &[pid, track] : video_)
+		pids.push_back(pid);
+	for (const auto &[pid, track] : audio_)
+		pids.push_back(pid);
+	if (pids.empty())
+		pids.push_back(0x1FFF);
+	receiver_.subscribe(std::move(pids));
+}
+
+// Métadonnées de l'émetteur : nom du PC et nom de chaque piste
+void Connection::on_meta(std::span<const uint8_t> data)
+{
+	const std::string text(data.begin(), data.end());
+	if (text == meta_)
+		return;
+	meta_ = text;
+
+	const nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
+	if (!j.is_object() || !j.contains("pistes") || !j["pistes"].is_array())
+		return;
+	std::string line;
+	for (const auto &t : j["pistes"]) {
+		if (!t.is_object())
+			continue;
+		const std::string type = t.value("type", "");
+		line += (line.empty() ? "" : ", ") + std::string(type == "video" ? "vidéo" : "son") + " « " +
+			t.value("nom", "?") + " »";
+	}
+	FLOG_I("%s:%u, émetteur « %s » : %s", address_.c_str(), port_, j.value("nom", "?").c_str(), line.c_str());
 }
 
 void Connection::on_streams(const std::vector<flash::TsStream> &streams)
@@ -134,11 +170,13 @@ void Connection::on_streams(const std::vector<flash::TsStream> &streams)
 
 void Connection::on_packet(const flash::MediaPacket &pkt)
 {
-	if (pkt.codec == flash::Codec::Meta)
+	if (pkt.codec == flash::Codec::Meta) {
+		std::lock_guard lock(mutex_);
+		on_meta(pkt.data);
 		return;
+	}
 
-	// Toutes les pistes nourrissent l'horloge, même celles qu'aucune source n'utilise :
-	// le décalage reste le même quand on ajoute ou retire une source.
+	// Chaque piste reçue nourrit l'horloge commune
 	clock_.observe(pkt.pts_ns, pkt.arrival_ns);
 
 	std::lock_guard lock(mutex_);

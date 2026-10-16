@@ -179,17 +179,18 @@ void VideoTrack::decode(const Packet &pkt)
 void VideoTrack::schedule(AVFrame *frame, const Packet &pkt, uint64_t decoded_ns)
 {
 	flash::ClockMap &clock = conn_.clock();
+	const uint64_t pts = cadence_.smooth(pkt.pts_ns);
 	// Les premières images comptent l'initialisation du décodeur : on ne les fait pas
 	// entrer dans l'horloge, elles gonfleraient la latence pour longtemps.
 	if (decoded_++ >= kWarmupFrames)
-		clock.observe(pkt.pts_ns, decoded_ns);
+		clock.observe(pts, decoded_ns);
 	if (!clock.ready()) {
 		give_frame(frame);
 		return;
 	}
 
 	const uint64_t interval = Connection::video_interval_ns();
-	const uint64_t target = clock.present(pkt.pts_ns);
+	const uint64_t target = clock.present(pts);
 	const uint64_t now = flash::now_ns();
 	const uint64_t tick = obs_get_video_frame_time();
 
@@ -206,9 +207,11 @@ void VideoTrack::schedule(AVFrame *frame, const Packet &pkt, uint64_t decoded_ns
 		release = now;
 
 	// Phase moyenne entre l'affichage réel et le milieu de l'intervalle visé : le son s'y aligne
-	const int64_t sample = (int64_t)(display - target) - (int64_t)interval / 2;
-	const int64_t phase = conn_.phase_ns.load();
-	conn_.phase_ns = frames_++ == 0 ? sample : phase + (sample - phase) / 32;
+	if (conn_.phase_pid == pid_) {
+		const int64_t sample = (int64_t)(display - target) - (int64_t)interval / 2;
+		const int64_t phase = conn_.phase_ns.load();
+		conn_.phase_ns = frames_++ == 0 ? sample : phase + (sample - phase) / 32;
+	}
 
 	{
 		std::lock_guard lock(ready_mutex_);
@@ -216,7 +219,7 @@ void VideoTrack::schedule(AVFrame *frame, const Packet &pkt, uint64_t decoded_ns
 			pool_.push_back(ready_.front().frame); // trop d'attente : on jette la plus ancienne
 			ready_.pop_front();
 		}
-		ready_.push_back({frame, pkt.arrival_ns, decoded_ns, target, release});
+		ready_.push_back({frame, pkt.pts_ns, pkt.arrival_ns, decoded_ns, target, release});
 	}
 	ready_cv_.notify_one();
 }
@@ -289,11 +292,12 @@ void VideoTrack::output(const Ready &r)
 		}
 	}
 
-	if (measure::enabled()) {
+	// Mesure : la première piste vidéo seulement (celle de la mire ou du banc)
+	if (measure::enabled() && pid_ == flash::ts::kPidVideo0) {
 		uint64_t capture = 0;
 		uint32_t n = 0;
 		if (flash::mire::read_code(frame->data[0], frame->linesize[0], capture, n))
 			measure::frame(n, capture, r.arrival_ns, r.decoded_ns, released, r.target_ns,
-				       flash::mire::flash_visible(frame->data[0], frame->linesize[0]));
+				       flash::mire::flash_visible(frame->data[0], frame->linesize[0]), r.pts_ns);
 	}
 }

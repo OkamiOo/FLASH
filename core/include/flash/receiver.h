@@ -15,6 +15,7 @@ namespace flash {
 // Messages de la voie de retour (récepteur vers émetteur)
 namespace control {
 constexpr uint8_t kKeyframeRequest = 0x01; // suivi du PID sur 2 octets
+constexpr uint8_t kSubscribe = 0x02;       // suivi des PID voulus, 2 octets chacun (aucun = tous)
 }
 
 // Ramène l'horloge de l'émetteur sur celle du récepteur. Un seul modèle par émetteur :
@@ -49,6 +50,21 @@ private:
 	bool have_offset_ = false;
 };
 
+// Lisse les horodatages d'une source vidéo. La capture de Windows date les images sur la
+// cadence de composition de l'écran principal (165 Hz par exemple) : une source à 60 i/s
+// arrive avec quelques millisecondes de gigue, assez pour que deux images tombent sur le
+// même rendu d'OBS. On suit la période réelle de la source et on recale chaque image
+// dessus ; la moyenne est conservée, donc la synchro aussi.
+class CadenceSmoother {
+public:
+	uint64_t smooth(uint64_t pts_ns);
+
+private:
+	uint64_t last_raw_ = 0;
+	double smoothed_ = 0;
+	double period_ = 0;
+};
+
 struct MediaPacket {
 	uint16_t pid = 0;
 	Codec codec = Codec::Meta;
@@ -72,6 +88,8 @@ public:
 	void stop();
 
 	void request_keyframe(uint16_t pid);
+	// Pistes à recevoir (vide = toutes). Renvoyé à chaque reconnexion.
+	void subscribe(std::vector<uint16_t> pids);
 	SrtLinkStats stats() { return client_.stats(); }
 	bool connected() const { return client_.connected(); }
 
@@ -84,6 +102,10 @@ private:
 	OnStreams on_streams_;
 	OnPacket on_packet_;
 	OnState on_state_;
+	void send_subscription();
+
+	std::mutex sub_mutex_;
+	std::vector<uint16_t> subscription_;
 	uint64_t arrival_ = 0;
 	uint64_t last_pts_ = 0;
 	bool have_pts_ = false;

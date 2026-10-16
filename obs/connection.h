@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,8 @@ public:
 	// Écart moyen entre l'heure prévue d'une image et l'instant où OBS l'affiche :
 	// le son s'y aligne pour rester synchro avec l'image réellement montrée.
 	std::atomic<int64_t> phase_ns{0};
+	// La piste vidéo qui fixe cette phase : la principale (PID le plus bas parmi celles reçues)
+	std::atomic<uint16_t> phase_pid{0};
 	static uint64_t video_interval_ns();
 
 private:
@@ -41,6 +44,7 @@ private:
 	void on_packet(const flash::MediaPacket &pkt);
 	void on_state(bool connected);
 	void rebind();
+	void on_meta(std::span<const uint8_t> data);
 
 	struct Subscription {
 		obs_source_t *source;
@@ -60,6 +64,7 @@ private:
 	std::map<uint16_t, std::unique_ptr<AudioTrack>> audio_;
 	std::atomic<uint64_t> last_keyframe_request_{0};
 	uint64_t last_report_ = 0;
+	std::string meta_;
 	int64_t max_video_lag_ = INT64_MIN;
 	int64_t max_audio_lag_ = INT64_MIN;
 };

@@ -49,7 +49,7 @@ appairage, découverte, codecs. Tout ce qui touche au temps réel est natif, san
 ### 2.1 Émetteur
 
 - Capture vidéo : Windows.Graphics.Capture (C++/WinRT), écrans et fenêtres, sans bordure
-  jaune, curseur au choix, cadence plafonnée par `MinUpdateInterval`. Pas d'injection dans les
+  jaune, curseur au choix, cadence plafonnée par un seau à jetons (§ 12). Pas d'injection dans les
   jeux : rien que l'anti-triche puisse reprocher.
 - Conversion : `ID3D11VideoProcessor` (BGRA vers NV12 BT.709, mise à l'échelle), sur le GPU,
   quel que soit le fabricant.
@@ -326,3 +326,56 @@ Enseignements :
   NVENC, l'image de toute source paraît en avance d'une image sur le son (-16,7 ms à 60 i/s).
   FLASH suit l'horloge d'OBS comme ses autres sources ; une compensation optionnelle pourra
   être ajoutée.
+
+## 12. Étape (b) : sources réelles
+
+Fait :
+
+- Capture WGC d'écrans et de fenêtres : fenêtre retrouvée par exécutable ou par titre, rouverte
+  si elle disparaît, redimensionnement suivi ; conversion BGRA vers NV12 et mise à l'échelle par
+  le processeur vidéo du GPU.
+- Son par application (processus racine retrouvé par son nom, suivi s'il redémarre), son du
+  système (tout sauf FLASH), micro.
+- Plusieurs pistes par envoi, un encodeur par piste. Le récepteur ne demande que les pistes
+  utilisées par ses sources, et l'émetteur n'encode que celles-là.
+- Repli d'encodage Media Foundation : encodeur matériel de la carte, puis encodeur logiciel de
+  Windows. Pas d'intra-refresh générique : une image clé toutes les 2 s.
+- En attendant l'interface, ligne de commande : `flash --liste`, puis par exemple
+  `flash --ecran 1 --appli discord.exe --micro`.
+- Banc d'essai (`flash --banc`) : une fenêtre et un son qui se comportent comme un jeu, pour
+  mesurer la vraie chaîne de capture (`tools/essai-boucle.ps1 -Banc`).
+
+Mesures (boucle locale, 1080p60, SRT 20 ms) :
+
+| Essai | Résultat |
+|---|---|
+| Banc : fenêtre par WGC et son de l'appli par loopback | toutes les images livrées par Windows encodées et affichées ; synchro rapportée aux horodatages de capture : -6 à -13 ms selon les sessions, stable dans une session |
+| 3 vidéos (mire, fenêtre, écran) et 3 sons | synchro de la piste principale -0,2 ms ; envoi 0,85 % du CPU, OBS de test 2,4 % ; GPU : encodeur 21 %, décodeur 17 % |
+| HEVC | latence 37,5 ms, synchro -1,4 ms |
+| Media Foundation (encodeur NVIDIA de Windows) | encodage 2,7 ms (NVENC direct : 2,1 ms), synchro -0,4 ms |
+| Encodeur logiciel de Windows | 3,9 % du CPU sur la mire, synchro -0,6 ms |
+| Micro | capté et encodé |
+
+Enseignements :
+
+- Windows date les images capturées sur la cadence de composition de l'écran principal
+  (165 Hz ici) : une source à 60 i/s arrive avec quelques millisecondes de gigue. Côté
+  émetteur, la cadence est limitée par un seau à jetons (une grille stricte jetait des
+  images) ; côté récepteur, les horodatages sont lissés sur la période réelle de la source,
+  sinon deux images tombent sur le même rendu d'OBS (un quart des images perdues avant ce
+  lissage).
+- L'horodatage WGC correspond à l'affichage de l'image à l'écran, environ 25 ms après son
+  rendu sur un écran à 60 Hz. Le son du loopback est daté autrement : l'écart de 6 à 13 ms
+  vient de Windows, pas du transport (la mire, aux horodatages exacts, reste sous 1 ms). Seule
+  une mesure physique (filmer l'écran et enregistrer le son en même temps) dira laquelle des
+  deux heures est la bonne ; en attendant, pas de correction à l'aveugle. L'écart se règle au
+  besoin dans OBS, par source (décalage de synchronisation).
+- Avec plusieurs vidéos, le son s'aligne sur la phase de la piste vidéo principale (la
+  première).
+- Une fenêtre qui affiche sans se caler sur le balayage de l'écran perd des images à la
+  composition (comme beaucoup de jeux en fenêtre sans V-Sync) : FLASH ne peut transmettre que
+  ce que Windows compose.
+- Sans récepteur, la capture et la conversion continuent (l'encodage, lui, s'arrête) : à
+  couper aussi plus tard pour ne rien consommer au repos.
+
+Reste pour cette étape : un essai d'endurance de 4 h, quand le PC est libre assez longtemps.

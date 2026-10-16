@@ -116,8 +116,8 @@ void SrtServer::stop()
 		thread_.join();
 
 	std::lock_guard lock(mutex_);
-	for (int s : clients_)
-		srt_close(s);
+	for (const Client &c : clients_)
+		srt_close(c.sock);
 	clients_.clear();
 	srt_epoll_release(epoll_);
 	srt_close(listener_);
@@ -146,7 +146,7 @@ void SrtServer::run()
 				srt_epoll_add_usock(epoll_, c, &ev);
 				{
 					std::lock_guard lock(mutex_);
-					clients_.push_back(c);
+					clients_.push_back({c, {}});
 				}
 				char host[64] = "?";
 				if (peer.ss_family == AF_INET)
@@ -181,7 +181,7 @@ void SrtServer::drop_client(int s)
 {
 	{
 		std::lock_guard lock(mutex_);
-		auto it = std::find(clients_.begin(), clients_.end(), s);
+		auto it = std::find_if(clients_.begin(), clients_.end(), [s](const Client &c) { return c.sock == s; });
 		if (it == clients_.end())
 			return;
 		clients_.erase(it);
@@ -191,11 +191,44 @@ void SrtServer::drop_client(int s)
 	FLOG_I("Récepteur déconnecté");
 }
 
+namespace {
+bool is_system_pid(uint16_t pid)
+{
+	return pid == 0 || pid == 0x1000 || pid == 0x01FF || pid == 0x0300;
+}
+} // namespace
+
 void SrtServer::send(const uint8_t *data, size_t size)
 {
+	if (size < 3)
+		return;
+	const uint16_t pid = (uint16_t)(((data[1] & 0x1F) << 8) | data[2]);
+	const bool everyone = is_system_pid(pid);
+
 	std::lock_guard lock(mutex_);
-	for (int s : clients_)
-		srt_sendmsg2(s, (const char *)data, (int)size, nullptr); // échec = message perdu pour lui seul
+	for (const Client &c : clients_) {
+		if (everyone || c.pids.empty() || std::find(c.pids.begin(), c.pids.end(), pid) != c.pids.end())
+			srt_sendmsg2(c.sock, (const char *)data, (int)size, nullptr); // échec = perdu pour lui seul
+	}
+}
+
+void SrtServer::set_subscription(int client, std::vector<uint16_t> pids)
+{
+	std::lock_guard lock(mutex_);
+	for (Client &c : clients_) {
+		if (c.sock == client)
+			c.pids = std::move(pids);
+	}
+}
+
+bool SrtServer::wanted(uint16_t pid) const
+{
+	std::lock_guard lock(mutex_);
+	for (const Client &c : clients_) {
+		if (c.pids.empty() || std::find(c.pids.begin(), c.pids.end(), pid) != c.pids.end())
+			return true;
+	}
+	return false;
 }
 
 size_t SrtServer::client_count() const

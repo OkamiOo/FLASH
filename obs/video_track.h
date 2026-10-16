@@ -40,6 +40,7 @@ private:
 
 	struct Ready {
 		AVFrame *frame;
+		uint64_t pts_ns;
 		uint64_t arrival_ns;
 		uint64_t decoded_ns;
 		uint64_t target_ns;
@@ -81,6 +82,7 @@ private:
 	AVFrame *frame_ = nullptr;
 	AVPacket *packet_ = nullptr;
 	bool waiting_keyframe_ = true;
+	flash::CadenceSmoother cadence_;
 	uint64_t frames_ = 0;
 	uint64_t decoded_ = 0;
 };

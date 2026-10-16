@@ -3,14 +3,12 @@
 #include <cstdint>
 #include <vector>
 
-struct AVCodecContext;
-struct AVFrame;
-struct AVPacket;
+struct OpusEncoder;
 
-// Opus 48 kHz, trames de 10 ms, mode basse latence.
-class OpusEncoder {
+// Opus 48 kHz, trames de 10 ms, mode basse latence (CELT seul, 2,5 ms de retard).
+class AudioEncoder {
 public:
-	~OpusEncoder();
+	~AudioEncoder();
 
 	bool open(int channels, int bitrate);
 	// Encode une trame de 480 échantillons entrelacés.
@@ -19,10 +17,6 @@ public:
 	int lookahead() const { return lookahead_; } // retard de l'encodeur, en échantillons
 
 private:
-	AVCodecContext *ctx_ = nullptr;
-	AVFrame *frame_ = nullptr;
-	AVPacket *packet_ = nullptr;
-	int channels_ = 2;
+	OpusEncoder *enc_ = nullptr;
 	int lookahead_ = 0;
-	int64_t pts_ = 0;
 };

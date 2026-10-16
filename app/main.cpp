@@ -103,7 +103,7 @@ int run_mire(const Args &args)
 		return 1;
 	}
 
-	OpusEncoder opus;
+	AudioEncoder opus;
 	if (!opus.open(2, 192000))
 		return 1;
 

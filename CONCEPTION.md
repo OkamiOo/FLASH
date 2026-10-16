@@ -292,9 +292,9 @@ aucun code GPL, le plugin restant sous GPL-3.0. À trancher avant la première d
 
 ## 11. Mesures de l'étape (a)
 
-Boucle locale (127.0.0.1), mire 1080p60 + bip, NVENC H.264 25 Mb/s, Opus 10 ms, latence SRT
-20 ms, OBS 32.2.2 portable. Mesures du plugin (`tools/essai-boucle.ps1`, `tools/analyse_mesure.py`),
-essai de 5 minutes :
+Boucle locale (127.0.0.1), mire 1080p60 + bip, NVENC H.264 25 Mb/s, Opus 10 ms (libopus compilé
+dans l'appli : un exe d'environ 580 Ko plus `srt.dll`), latence SRT 20 ms, OBS 32.2.2 portable. Mesures
+du plugin (`tools/essai-boucle.ps1`, `tools/analyse_mesure.py`), essai de 5 minutes :
 
 | Critère | Mesure |
 |---|---|
@@ -302,7 +302,7 @@ essai de 5 minutes :
 | Capture -> réception (encodage + SRT) | 23,3 ms (99 % sous 25,2 ms) |
 | Réception -> image décodée et copiée | 1,8 ms (99 % sous 2,2 ms) |
 | Décalage d'horloge (heure de présentation) | 37,1 ms, stable |
-| Latence capture -> image composée par OBS | 37,7 à 49,5 ms selon les sessions, constante dans une session |
+| Latence capture -> image composée par OBS | 37,7 à 52,7 ms selon les sessions, constante dans une session |
 | Écart son/image | -0,4 ms en moyenne, écart-type 0,1 ms, dérive non mesurable sur 5 min |
 | Charge | envoi 0,2 % du CPU, OBS de test entier 1,2 % ; GPU : encodeur 7 %, décodeur 6 % |
 

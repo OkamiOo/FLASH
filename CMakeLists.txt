@@ -18,7 +18,7 @@ set(FLASH_OBS_SRC "${CMAKE_SOURCE_DIR}/.deps/obs-src/obs-studio-32.2.2-sources")
 set(FLASH_TEST_OBS "${CMAKE_SOURCE_DIR}/.test-obs")
 
 add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
-add_compile_options(/utf-8 /W3 /permissive- /Zc:__cplusplus /Brepro /GS /Gy)
+add_compile_options(/utf-8 /W3 /Brepro /GS /Gy "$<$<COMPILE_LANGUAGE:CXX>:/permissive-;/Zc:__cplusplus>")
 # Pas de PDB ni de chemin de compilation dans les binaires
 add_link_options(/Brepro /DEBUG:NONE /INCREMENTAL:NO /OPT:REF /OPT:ICF)
 
@@ -34,6 +34,16 @@ flash_import_lib(flash::srt srt.lib)
 flash_import_lib(flash::avcodec avcodec.lib)
 flash_import_lib(flash::avutil avutil.lib)
 flash_import_lib(flash::swresample swresample.lib)
+
+# Opus 1.5.2, compilé dans l'appli (sources dans .deps/opus)
+set(OPUS_STATIC_RUNTIME ON CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+set(FLASH_OPUS_SRC "${CMAKE_SOURCE_DIR}/.deps/opus/opus-1.5.2")
+add_subdirectory("${FLASH_OPUS_SRC}" opus EXCLUDE_FROM_ALL)
+# Les contrôles internes d'Opus citent leur fichier source : on n'en garde que le nom relatif
+file(TO_NATIVE_PATH "${FLASH_OPUS_SRC}/" _opus_prefix)
+target_compile_options(opus PRIVATE "/d1trimfile:${_opus_prefix}")
 
 add_subdirectory(core)
 add_subdirectory(app)

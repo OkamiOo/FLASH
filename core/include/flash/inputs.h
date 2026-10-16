@@ -52,6 +52,7 @@ std::vector<ScreenInfo> list_screens();
 std::vector<WindowInfo> list_windows();
 std::vector<AudioAppInfo> list_audio_apps();
 std::vector<std::string> list_microphones();
+std::vector<std::string> list_audio_outputs();
 
 // Taille d'encodage : la source ramenée dans max_w × max_h, proportions gardées, côtés pairs.
 void fit_size(uint32_t src_w, uint32_t src_h, uint32_t max_w, uint32_t max_h, uint32_t &w, uint32_t &h);

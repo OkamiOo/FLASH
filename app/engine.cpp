@@ -16,6 +16,8 @@ using namespace flash;
 
 namespace {
 
+constexpr uint64_t kDiscoveryFreshNs = 3'000'000'000ULL;
+
 std::wstring settings_path()
 {
 	PWSTR base = nullptr;
@@ -25,6 +27,48 @@ std::wstring settings_path()
 	CoTaskMemFree(base);
 	CreateDirectoryW(dir.c_str(), nullptr);
 	return dir + L"\\reglages.json";
+}
+
+// Plusieurs FLASH peuvent tourner à la fois (interface, ligne de commande) : chacun relit le
+// fichier puis le remplace sous ce verrou commun, sinon l'un efface ce que l'autre vient d'écrire.
+class SettingsLock {
+public:
+	SettingsLock() : mutex_(CreateMutexW(nullptr, FALSE, L"Local\\FLASH-reglages"))
+	{
+		if (mutex_)
+			WaitForSingleObject(mutex_, 5000);
+	}
+	~SettingsLock()
+	{
+		if (mutex_) {
+			ReleaseMutex(mutex_);
+			CloseHandle(mutex_);
+		}
+	}
+
+private:
+	HANDLE mutex_;
+};
+
+// Contenu du fichier ; faux s'il existe mais reste illisible (en cours de remplacement…)
+bool read_settings(json &j)
+{
+	const std::wstring path = settings_path();
+	for (int attempt = 0; attempt < 5; attempt++) {
+		if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) {
+			j = json::object();
+			return true;
+		}
+		std::ifstream in(path);
+		if (in) {
+			j = json::parse(in, nullptr, false);
+			if (j.is_object())
+				return true;
+		}
+		Sleep(20);
+	}
+	j = json::object();
+	return false;
 }
 
 std::string computer_name()
@@ -69,23 +113,28 @@ Engine::~Engine()
 
 void Engine::load()
 {
-	std::ifstream f(settings_path());
-	if (!f)
-		return;
-	const json j = json::parse(f, nullptr, false);
-	if (!j.is_object())
+	json j;
+	{
+		SettingsLock lock;
+		read_settings(j);
+	}
+	if (j.empty())
 		return;
 
 	id_ = j.value("id", "");
 	name_ = j.value("nom", "");
 	code_ = j.value("code", "");
-	if (j.contains("recepteurs") && j["recepteurs"].is_array()) {
-		for (const auto &r : j["recepteurs"]) {
-			const std::string key = unprotect_secret(r.value("cle", ""));
-			if (!key.empty())
-				receivers_.push_back({r.value("id", ""), r.value("nom", ""), key});
+	auto peers = [&](const char *key, std::vector<Peer> &out) {
+		if (!j.contains(key) || !j[key].is_array())
+			return;
+		for (const auto &r : j[key]) {
+			const std::string secret = unprotect_secret(r.value("cle", ""));
+			if (!secret.empty())
+				out.push_back({r.value("id", ""), r.value("nom", ""), secret, r.value("adresse", "")});
 		}
-	}
+	};
+	peers("recepteurs", receivers_);
+	peers("emetteurs", senders_);
 	if (!persist_)
 		return; // en ligne de commande, sources et réglages viennent des arguments
 
@@ -108,23 +157,35 @@ void Engine::load()
 	}
 }
 
-void Engine::save()
+void Engine::save(unsigned parts)
 {
+	// Relu à chaque fois : une autre instance (ligne de commande) a pu écrire ses propres parties.
+	// Illisible : tout ce qu'on sait est réécrit, plutôt que de perdre le reste.
+	SettingsLock lock;
 	json j;
-	std::ifstream in(settings_path());
-	if (in)
-		j = json::parse(in, nullptr, false);
-	in.close();
-	if (!j.is_object())
-		j = json::object();
+	if (!read_settings(j))
+		parts = kIdentity | kReceivers | kSenders | kSettings;
 
-	j["id"] = id_;
-	j["nom"] = name_;
-	j["code"] = code_;
-	j["recepteurs"] = json::array();
-	for (const Receiver &r : receivers_)
-		j["recepteurs"].push_back({{"id", r.id}, {"nom", r.name}, {"cle", protect_secret(r.key)}});
-	if (persist_) {
+	auto peers = [](const std::vector<Peer> &list, bool address) {
+		json out = json::array();
+		for (const Peer &p : list) {
+			json e = {{"id", p.id}, {"nom", p.name}, {"cle", protect_secret(p.key)}};
+			if (address)
+				e["adresse"] = p.address;
+			out.push_back(e);
+		}
+		return out;
+	};
+	if (parts & kIdentity) {
+		j["id"] = id_;
+		j["nom"] = name_;
+		j["code"] = code_;
+	}
+	if (parts & kReceivers)
+		j["recepteurs"] = peers(receivers_, false);
+	if (parts & kSenders)
+		j["emetteurs"] = peers(senders_, true);
+	if ((parts & kSettings) && persist_) {
 		j["sources"] = json::array();
 		for (const SourceChoice &s : sources_)
 			j["sources"].push_back({{"type", s.kind}, {"valeur", s.value}});
@@ -141,7 +202,8 @@ void Engine::save()
 		std::ofstream out(tmp, std::ios::trunc);
 		out << j.dump(2);
 	}
-	MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+	for (int attempt = 0; attempt < 5 && !MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING); attempt++)
+		Sleep(20);
 }
 
 void Engine::preset(const EngineSettings &s)
@@ -150,12 +212,13 @@ void Engine::preset(const EngineSettings &s)
 	settings_ = s;
 }
 
-bool Engine::start(bool persist)
+bool Engine::start(bool persist, bool network)
 {
 	std::lock_guard lock(mutex_);
 	{
 		std::lock_guard d(data_);
 		persist_ = persist;
+		network_ = network;
 		load();
 		if (id_.empty())
 			id_ = new_device_id();
@@ -163,8 +226,11 @@ bool Engine::start(bool persist)
 			name_ = computer_name();
 		if (code_.empty())
 			code_ = new_invitation_code();
-		save();
+		self_key_ = new_device_id() + new_device_id();
+		save(kIdentity | kSettings);
 	}
+	if (!network)
+		return true;
 
 	std::string gpu;
 	device_ = create_d3d11_device(&gpu);
@@ -194,16 +260,23 @@ void Engine::start_network()
 			[this](const PeerInfo &r, const std::string &key) {
 				std::lock_guard d(data_);
 				receivers_.erase(std::remove_if(receivers_.begin(), receivers_.end(),
-								[&](const Receiver &x) { return x.id == r.id; }),
+								[&](const Peer &x) { return x.id == r.id; }),
 						 receivers_.end());
-				receivers_.push_back({r.id, r.name, key});
-				save();
+				receivers_.push_back({r.id, r.name, key, ""});
+				save(kReceivers);
 			}});
 	discovery_.start(address, [this] { return announce(); });
 }
 
 void Engine::stop()
 {
+	std::map<std::string, std::unique_ptr<Viewer>> views;
+	{
+		std::lock_guard v(views_mutex_);
+		views.swap(views_);
+	}
+	views.clear();
+
 	std::lock_guard lock(mutex_);
 	sender_.reset();
 	discovery_.stop();
@@ -226,7 +299,7 @@ void Engine::restart_sender()
 		s = settings_;
 		name = name_;
 	}
-	if (sources.empty())
+	if (sources.empty() || !device_)
 		return;
 
 	std::vector<std::unique_ptr<VideoInput>> video;
@@ -251,15 +324,20 @@ void Engine::restart_sender()
 	sender_ = std::move(sender);
 }
 
-// Un récepteur appairé reçoit sa clé ; un inconnu n'entre que si l'envoi est ouvert
+// Un récepteur appairé reçoit sa clé, la visionneuse de ce PC la clé de la session ; un inconnu
+// n'entre que si l'envoi est ouvert
 bool Engine::authorize(const std::string &stream_id, std::string &passphrase)
 {
 	std::lock_guard d(data_);
-	for (const Receiver &r : receivers_) {
+	for (const Peer &r : receivers_) {
 		if (r.id == stream_id) {
 			passphrase = r.key;
 			return true;
 		}
+	}
+	if (stream_id == id_ && !self_key_.empty()) {
+		passphrase = self_key_;
+		return true;
 	}
 	passphrase.clear();
 	return settings_.open;
@@ -285,7 +363,7 @@ void Engine::set_sources(const std::vector<SourceChoice> &sources)
 		if (sources == sources_)
 			return;
 		sources_ = sources;
-		save();
+		save(kSettings);
 	}
 	restart_sender();
 }
@@ -304,9 +382,9 @@ void Engine::set_settings(const EngineSettings &s)
 		std::lock_guard d(data_);
 		rebind = s.address != settings_.address;
 		settings_ = s;
-		save();
+		save(kSettings);
 	}
-	if (rebind) {
+	if (rebind && network_) {
 		discovery_.stop();
 		pairing_.stop();
 		start_network();
@@ -336,14 +414,14 @@ void Engine::new_code()
 {
 	std::lock_guard d(data_);
 	code_ = new_invitation_code();
-	save();
+	save(kIdentity);
 }
 
 std::vector<PeerInfo> Engine::receivers()
 {
 	std::lock_guard d(data_);
 	std::vector<PeerInfo> out;
-	for (const Receiver &r : receivers_)
+	for (const Peer &r : receivers_)
 		out.push_back({r.id, r.name});
 	return out;
 }
@@ -354,25 +432,275 @@ void Engine::forget_receiver(const std::string &id)
 	{
 		std::lock_guard d(data_);
 		receivers_.erase(
-			std::remove_if(receivers_.begin(), receivers_.end(), [&](const Receiver &r) { return r.id == id; }),
+			std::remove_if(receivers_.begin(), receivers_.end(), [&](const Peer &r) { return r.id == id; }),
 			receivers_.end());
-		save();
+		save(kReceivers);
 	}
 	restart_sender(); // coupe sa connexion en cours
 }
 
-json Engine::status()
+// ---------- Réception ----------
+
+std::vector<SenderAnnounce> Engine::discover(bool refresh)
 {
-	std::lock_guard lock(mutex_);
-	json j;
+	std::lock_guard lock(discover_mutex_);
+	if (refresh || !seen_at_ || now_ns() - seen_at_ > kDiscoveryFreshNs) {
+		seen_ = discover_senders(500);
+		seen_at_ = now_ns();
+	}
+	return seen_;
+}
+
+json Engine::senders_json(bool refresh)
+{
+	const std::vector<SenderAnnounce> found = discover(refresh);
+	std::vector<Peer> paired;
+	std::string self, self_name;
 	{
 		std::lock_guard d(data_);
-		j = {{"id", id_}, {"nom", name_}, {"code", code_}};
+		paired = senders_;
+		self = id_;
+		self_name = name_;
+	}
+	std::vector<std::string> open_views;
+	{
+		std::lock_guard v(views_mutex_);
+		for (const auto &[key, view] : views_)
+			open_views.push_back(key);
+	}
+	auto is_open = [&](const std::string &id) {
+		return std::find(open_views.begin(), open_views.end(), id) != open_views.end();
+	};
+
+	json list = json::array();
+	for (const SenderAnnounce &s : found) {
+		const bool me = s.id == self;
+		if (me && s.tracks.empty())
+			continue; // ce PC n'envoie rien : rien à voir
+		const bool is_paired =
+			std::any_of(paired.begin(), paired.end(), [&](const Peer &p) { return p.id == s.id; });
+		json tracks = json::array();
+		for (const AnnouncedTrack &t : s.tracks)
+			tracks.push_back({{"nom", t.name}, {"video", t.video}});
+		list.push_back({{"id", s.id},
+				{"nom", me ? self_name : s.name},
+				{"adresse", s.address},
+				{"port_appairage", s.pairing_port},
+				{"trouve", true},
+				{"appaire", is_paired},
+				{"ouvert", s.open},
+				{"moi", me},
+				{"vue", is_open(s.id)},
+				{"pistes", tracks}});
+	}
+	for (const Peer &p : paired) {
+		if (std::any_of(found.begin(), found.end(), [&](const SenderAnnounce &s) { return s.id == p.id; }))
+			continue;
+		list.push_back({{"id", p.id},
+				{"nom", p.name},
+				{"adresse", p.address},
+				{"trouve", false},
+				{"appaire", true},
+				{"ouvert", false},
+				{"moi", false},
+				{"vue", is_open(p.id)},
+				{"pistes", json::array()}});
+	}
+	return {{"type", "emetteurs"}, {"liste", list}, {"sorties", list_audio_outputs()}};
+}
+
+PairingResult Engine::pair(const std::string &address, uint16_t port, const std::string &code)
+{
+	const PairingResult r = pair_with_sender(address, port ? port : kPairingPort, code, {id(), name()});
+	if (!r.ok)
+		return r;
+	std::lock_guard d(data_);
+	senders_.erase(std::remove_if(senders_.begin(), senders_.end(), [&](const Peer &p) { return p.id == r.sender.id; }),
+		       senders_.end());
+	senders_.push_back({r.sender.id, r.sender.name, r.key_hex, address});
+	save(kSenders);
+	return r;
+}
+
+void Engine::forget_sender(const std::string &id)
+{
+	close_view(id);
+	std::lock_guard d(data_);
+	senders_.erase(std::remove_if(senders_.begin(), senders_.end(), [&](const Peer &p) { return p.id == id; }),
+		       senders_.end());
+	save(kSenders);
+}
+
+// Avant chaque tentative de connexion d'une visionneuse : où est l'émetteur, et avec quelle clé
+bool Engine::refresh_target(const std::string &sender, SrtOptions &o, int &failures)
+{
+	std::string key, stored;
+	bool self;
+	{
+		std::lock_guard d(data_);
+		o.stream_id = id_;
+		self = sender == id_;
+		for (const Peer &p : senders_) {
+			if (p.id == sender) {
+				key = p.key;
+				stored = p.address;
+			}
+		}
+		if (self && key.empty()) {
+			// Aperçu de ce PC : en local, avec la clé de la session
+			o.address = "127.0.0.1";
+			o.port = settings_.port;
+			o.passphrase = self_key_;
+			return true;
+		}
+	}
+
+	for (const SenderAnnounce &s : discover(failures > 0)) {
+		if (s.id == sender) {
+			o.address = s.address;
+			o.port = s.srt_port;
+			o.passphrase = key;
+			failures = 0;
+			return true;
+		}
+	}
+	if (failures++ == 0)
+		FLOG_I("Émetteur %s introuvable sur le réseau pour l'instant", sender.c_str());
+	if (stored.empty())
+		return false;
+	o.address = stored; // adresse de l'appairage, si la découverte ne passe pas (autre réseau)
+	o.passphrase = key;
+	return true;
+}
+
+bool Engine::watch(const WatchRequest &r, std::string &error)
+{
+	const std::string self = id();
+	const std::string sid = r.sender == "moi" ? self : r.sender;
+	const std::string key = sid.empty() ? r.address : sid;
+	if (key.empty()) {
+		error = "Aucun émetteur choisi";
+		return false;
+	}
+
+	ViewerOptions v;
+	const EngineSettings s = settings();
+	v.srt.latency_ms = s.latency_ms;
+	v.srt.stream_id = self;
+	std::string title;
+	if (!sid.empty()) {
+		{
+			std::lock_guard d(data_);
+			if (sid == id_)
+				title = name_ + " (aperçu)";
+			for (const Peer &p : senders_) {
+				if (p.id == sid)
+					title = p.name;
+			}
+		}
+		if (title.empty()) {
+			for (const SenderAnnounce &a : discover(false)) {
+				if (a.id == sid)
+					title = a.name;
+			}
+		}
+		auto failures = std::make_shared<int>(0);
+		v.srt.refresh = [this, sid, failures](SrtOptions &o) { return refresh_target(sid, o, *failures); };
+	} else {
+		v.srt.address = r.address;
+		title = r.address;
+	}
+	if (title.empty())
+		title = "Émetteur";
+	v.title = title + (r.video.empty() || r.video == "-" ? "" : " : " + r.video);
+	v.video = r.video;
+	v.audio = r.audio;
+	v.output = r.output;
+	v.fullscreen = r.fullscreen;
+	v.screen = r.screen;
+	v.background = r.background;
+
+	// Une seule visionneuse par émetteur : l'ancienne se ferme d'abord
+	close_view(key);
+	auto view = std::make_unique<Viewer>(v);
+	std::lock_guard lock(views_mutex_);
+	views_[key] = std::move(view);
+	return true;
+}
+
+void Engine::close_view(const std::string &sender)
+{
+	std::unique_ptr<Viewer> old;
+	{
+		std::lock_guard lock(views_mutex_);
+		auto it = views_.find(sender);
+		if (it == views_.end())
+			return;
+		old = std::move(it->second);
+		views_.erase(it);
+	}
+}
+
+// Les fenêtres fermées par l'utilisateur sont retirées ici
+json Engine::views_json()
+{
+	std::vector<std::unique_ptr<Viewer>> closed;
+	json list = json::array();
+	{
+		std::lock_guard lock(views_mutex_);
+		for (auto it = views_.begin(); it != views_.end();) {
+			if (it->second->closed()) {
+				closed.push_back(std::move(it->second));
+				it = views_.erase(it);
+				continue;
+			}
+			json st = it->second->status();
+			st["id"] = it->first;
+			list.push_back(st);
+			++it;
+		}
+	}
+	return list;
+}
+
+size_t Engine::views()
+{
+	std::vector<std::unique_ptr<Viewer>> closed;
+	std::lock_guard lock(views_mutex_);
+	for (auto it = views_.begin(); it != views_.end();) {
+		if (it->second->closed()) {
+			closed.push_back(std::move(it->second));
+			it = views_.erase(it);
+		} else {
+			++it;
+		}
+	}
+	return views_.size();
+}
+
+json Engine::status()
+{
+	json j;
+	j["vues"] = views_json();
+	bool self_view = false;
+	for (const auto &v : j["vues"])
+		self_view = self_view || v.value("id", "") == id();
+
+	std::lock_guard lock(mutex_);
+	{
+		std::lock_guard d(data_);
+		j["id"] = id_;
+		j["nom"] = name_;
+		j["code"] = code_;
 		j["recepteurs"] = json::array();
-		for (const Receiver &r : receivers_)
+		for (const Peer &r : receivers_)
 			j["recepteurs"].push_back({{"id", r.id}, {"nom", r.name}});
 	}
-	j["connectes"] = sender_ ? sender_->client_count() : 0;
+	// L'aperçu de ce PC ne compte pas comme un PC qui reçoit
+	size_t clients = sender_ ? sender_->client_count() : 0;
+	if (self_view && clients > 0)
+		clients--;
+	j["connectes"] = clients;
 
 	// Débits sur l'intervalle depuis le dernier appel
 	const uint64_t now = now_ns();

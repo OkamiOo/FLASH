@@ -408,9 +408,59 @@ le code tapé en minuscules sans tiret ; connexion SRT refusée sans clé ; flux
 bout jusqu'à l'OBS de test, pistes choisies par nom (latence 39 à 45 ms selon la session,
 synchro -0,4 à -0,7 ms) ; affichage de l'interface et logique de la page.
 
+### Visionneuse de l'appli
+
+- Section « Regarder » de l'interface : les PC du réseau où FLASH est ouvert, ce PC compris
+  (aperçu de ce qu'il envoie, sans le son par défaut). Pour un PC pas encore appairé : son
+  code, puis « Appairer ». Ensuite on choisit l'image, le son (un, tous ou aucun) et la sortie
+  son, puis « Regarder ». Un PC hors de portée de la découverte s'ajoute par son adresse IP.
+- Ligne de commande : `flash --voir émetteur [--piste nom] [--son nom|tous] [--sortie nom]
+  [--plein-ecran] [--ecran-vue N]`, avec ou sans envoi dans le même processus (`moi` : ce PC).
+  `--appairer adresse code` enregistre maintenant l'appairage dans les réglages.
+- Une fenêtre par émetteur, plein écran au double-clic, avec F11 ou Alt+Entrée, curseur
+  masqué au bout de 2 s. Sans image, la fenêtre dit pourquoi (connexion, piste absente,
+  décodeur manquant).
+- Décodage par Media Foundation, sur la carte graphique (DXVA), copie dans une réserve de
+  textures NV12, conversion vers l'écran par le processeur vidéo du GPU. HEVC demande
+  l'extension HEVC de Windows ; sinon la fenêtre le dit.
+- Même horloge que dans OBS : chaque image est présentée au milieu de l'intervalle qui
+  précède le premier balayage de l'écran à partir de son heure, avec la même hystérésis. Un
+  fil suit les balayages de l'écran où se trouve la fenêtre (`WaitForVBlank`) ; l'écart moyen
+  avec l'heure d'affichage que donne Windows (`GetFrameStatistics`) corrige l'estimation.
+- Son : chaque piste est décodée (libopus) et rangée sur l'horloge de l'émetteur dans un
+  anneau commun, les pistes s'y additionnent. La sortie (WASAPI, plus petite période permise
+  par Windows) lit l'anneau à l'heure où ses échantillons seront entendus, calée sur l'image
+  réellement affichée, avec un rattrapage de vitesse de 0,5 % au plus.
+- Le son n'est lu qu'une latence de sortie avant d'être entendu : l'horloge commune en tient
+  compte, l'image attend donc d'autant. Sans son, l'image n'attend que le réseau et le
+  décodage.
+- Aperçu de ce PC : la visionneuse se connecte en local avec une clé tirée pour la session ;
+  elle ne compte pas dans « PC qui reçoivent ».
+- Plusieurs FLASH peuvent écrire `reglages.json` à la fois (interface, ligne de commande) :
+  chaque écriture relit le fichier et ne remplace que ses propres parties, sous un verrou
+  commun. Sans ce verrou, un appairage fait pendant un envoi en ligne de commande se perdait.
+- Plugin : une source réglée par adresse IP prend la clé de l'émetteur appairé qui répond à
+  cette adresse. Avant, l'émetteur refusait la connexion (il exige le chiffrement pour un
+  récepteur appairé).
+
+Mesures en boucle locale (mire 1080p60, SRT 20 ms, fenêtre sur un écran à 60 Hz, heure
+d'affichage estimée comme ci-dessus) :
+
+| Essai | Latence capture -> écran | Synchro son/image | Images perdues |
+|---|---|---|---|
+| Image seule, 30 s | 41,3 ms (99 % sous 43,1 ms) | | 0 |
+| Image et son vers « Steam Streaming Speakers », 30 s | 106,3 ms | -0,08 ms (écart-type 0,11) | 0 |
+| Plugin OBS après ces changements, 30 s | 41,3 ms | -0,40 ms | 0 |
+
+La sortie virtuelle de Steam met 59 ms entre l'écriture d'un échantillon et son écoute
+(période de 10 ms, dont 20 ms gardés d'avance par FLASH) : c'est elle qui porte la latence de
+l'essai avec son. Une vraie sortie (casque, enceintes) reste à mesurer.
+
 Reste pour cette étape :
 
-- la visionneuse de l'appli (recevoir sans OBS) ;
 - les essais en réseau réel : au premier lancement en « Réseau local », Windows demandera
   l'autorisation du pare-feu (l'installeur ajoutera la règle) ;
-- un passage à la main dans les propriétés des sources FLASH d'OBS.
+- un passage à la main dans l'interface (Regarder) et dans les propriétés des sources FLASH
+  d'OBS ;
+- la latence du son sur une vraie sortie, et une mesure physique de la synchro (filmer
+  l'écran et enregistrer le son).

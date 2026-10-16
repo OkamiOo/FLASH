@@ -1,11 +1,11 @@
 #include "connection.h"
 #include "audio_track.h"
 #include "directory.h"
-#include "measure.h"
 #include "video_track.h"
 
 #include <flash/clock.h>
 #include <flash/log.h>
+#include <flash/measure.h>
 
 #include <nlohmann/json.hpp>
 
@@ -50,8 +50,17 @@ Connection::Connection(const Target &target) : target_(target), label_(target.ke
 bool Connection::refresh(flash::SrtOptions &o)
 {
 	o.stream_id = directory::self_id();
-	if (target_.sender_id.empty())
+	if (target_.sender_id.empty()) {
+		// Adresse saisie à la main : si c'est celle d'un émetteur appairé, sa clé
+		for (const flash::SenderAnnounce &s : directory::senders(false)) {
+			if (s.address == target_.address && s.srt_port == target_.port) {
+				const auto paired = directory::paired_with(s.id);
+				o.passphrase = paired ? paired->key : "";
+				break;
+			}
+		}
 		return true;
+	}
 
 	const auto found = directory::find(target_.sender_id, failures_ > 0);
 	if (!found) {
@@ -233,7 +242,7 @@ void Connection::on_packet(const flash::MediaPacket &pkt)
 
 	if (pkt.arrival_ns - last_report_ >= 1'000'000'000ULL) {
 		last_report_ = pkt.arrival_ns;
-		measure::clock(clock_.offset_ns(), phase_ns.load(), max_video_lag_, max_audio_lag_);
+		flash::measure::clock(clock_.offset_ns(), phase_ns.load(), max_video_lag_, max_audio_lag_);
 		max_video_lag_ = max_audio_lag_ = INT64_MIN;
 	}
 }

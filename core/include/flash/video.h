@@ -6,6 +6,7 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -48,5 +49,30 @@ std::unique_ptr<VideoEncoder> create_mf_encoder(ID3D11Device *device, const Vide
 // preference : "auto", "nvenc", "mf" ou "logiciel" (encodeur logiciel de Windows seul).
 std::unique_ptr<VideoEncoder> create_video_encoder(ID3D11Device *device, const VideoEncoderConfig &config,
 						   const std::string &preference = "auto");
+
+// Image décodée : une texture NV12 du GPU (parfois une case d'un tableau de textures), valable
+// jusqu'au décodage suivant.
+struct DecodedFrame {
+	ID3D11Texture2D *texture = nullptr;
+	UINT subresource = 0;
+	RECT visible{}; // partie à montrer (1080 lignes d'une surface de 1088…)
+	int64_t time = 0; // horodatage donné avec l'image compressée
+};
+
+class VideoDecoder {
+public:
+	using OnFrame = std::function<void(const DecodedFrame &)>;
+
+	virtual ~VideoDecoder() = default;
+
+	// Une image compressée complète (Annex B). Faux si le décodeur la refuse.
+	virtual bool decode(const uint8_t *data, size_t size, int64_t time, const OnFrame &on_frame) = 0;
+	virtual const char *name() const = 0;
+	virtual bool hardware() const = 0;
+};
+
+// Décodeur de Windows (Media Foundation), par la carte graphique si possible, sinon par le
+// processeur. HEVC demande l'extension HEVC de Windows.
+std::unique_ptr<VideoDecoder> create_mf_decoder(ID3D11Device *device, Codec codec);
 
 } // namespace flash

@@ -1,9 +1,9 @@
 #include "video_track.h"
 #include "connection.h"
-#include "measure.h"
 
 #include <flash/clock.h>
 #include <flash/log.h>
+#include <flash/measure.h>
 #include <flash/mire.h>
 
 extern "C" {
@@ -305,16 +305,16 @@ void VideoTrack::output(const Ready &r)
 		std::lock_guard lock(sources_mutex_);
 		for (obs_source_t *s : sources_) {
 			obs_source_output_video(s, &f);
-			measure::released(s, r.target_ns);
+			flash::measure::released(s, r.target_ns);
 		}
 	}
 
 	// Mesure : la première piste vidéo seulement (celle de la mire ou du banc)
-	if (measure::enabled() && pid_ == flash::ts::kPidVideo0) {
+	if (flash::measure::enabled() && pid_ == flash::ts::kPidVideo0) {
 		uint64_t capture = 0;
 		uint32_t n = 0;
 		if (flash::mire::read_code(frame->data[0], frame->linesize[0], capture, n))
-			measure::frame(n, capture, r.arrival_ns, r.decoded_ns, released, r.target_ns,
+			flash::measure::frame(n, capture, r.arrival_ns, r.decoded_ns, released, r.target_ns,
 				       flash::mire::flash_visible(frame->data[0], frame->linesize[0]), r.pts_ns);
 	}
 }

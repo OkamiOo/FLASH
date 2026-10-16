@@ -1,7 +1,6 @@
-#include "measure.h"
-
 #include <flash/clock.h>
 #include <flash/log.h>
+#include <flash/measure.h>
 
 #include <obs-module.h>
 
@@ -32,14 +31,14 @@ bool obs_module_load(void)
 	flash::enable_precise_timers();
 	register_sources();
 	blog(LOG_INFO, "[FLASH] version %s", FLASH_VERSION);
-	if (measure::enabled())
+	if (flash::measure::enabled())
 		blog(LOG_INFO, "[FLASH] journal de mesure actif");
 	return true;
 }
 
 void obs_module_unload(void)
 {
-	measure::shutdown();
+	flash::measure::shutdown();
 	flash::shutdown_log();
 }
 

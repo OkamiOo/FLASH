@@ -1,7 +1,7 @@
 #include "connection.h"
 #include "directory.h"
-#include "measure.h"
 
+#include <flash/measure.h>
 #include <flash/pairing.h>
 
 #include <obs-module.h>
@@ -231,7 +231,7 @@ obs_properties_t *source_properties(void *data)
 void video_tick(void *data, float)
 {
 	auto *s = static_cast<FlashSource *>(data);
-	measure::tick(s->source, obs_get_video_frame_time());
+	flash::measure::tick(s->source, obs_get_video_frame_time());
 }
 
 } // namespace

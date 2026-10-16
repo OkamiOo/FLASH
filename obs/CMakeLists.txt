@@ -33,7 +33,6 @@ add_library(flash-obs MODULE
   audio_track.cpp
   connection.cpp
   directory.cpp
-  measure.cpp
   plugin.cpp
   sources.cpp
   video_track.cpp

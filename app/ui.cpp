@@ -173,12 +173,61 @@ void send_status()
 	to_page(st);
 }
 
+void send_senders(bool refresh)
+{
+	to_page(g->engine.senders_json(refresh));
+}
+
 void on_page_message(const json &m)
 {
 	const std::string action = m.value("action", "");
 	if (action == "pret") {
 		g->worker->post([] {
 			to_page(lists(false));
+			send_status();
+			send_senders(true);
+		});
+	} else if (action == "chercher") {
+		g->worker->post([] { send_senders(true); });
+	} else if (action == "appairer") {
+		const std::string address = m.value("adresse", "");
+		const uint16_t port = (uint16_t)m.value("port", 0);
+		const std::string code = m.value("code", "");
+		const std::string id = m.value("id", "");
+		g->worker->post([address, port, code, id] {
+			const PairingResult r = g->engine.pair(address, port, code);
+			to_page({{"type", "appairage"}, {"id", id}, {"ok", r.ok}, {"erreur", r.error}, {"nom", r.sender.name}});
+			send_senders(false);
+		});
+	} else if (action == "oublier") {
+		const std::string id = m.value("id", "");
+		g->worker->post([id] {
+			g->engine.forget_sender(id);
+			send_senders(false);
+		});
+	} else if (action == "regarder") {
+		WatchRequest r;
+		r.sender = m.value("moi", false) ? "moi" : m.value("id", "");
+		r.video = m.value("video", "");
+		if (m.contains("son") && m["son"].is_array()) {
+			for (const auto &s : m["son"])
+				if (s.is_string())
+					r.audio.push_back(s.get<std::string>());
+		}
+		r.output = m.value("sortie", "");
+		const std::string id = m.value("id", "");
+		g->worker->post([r, id] {
+			std::string error;
+			if (!g->engine.watch(r, error))
+				to_page({{"type", "appairage"}, {"id", id}, {"ok", false}, {"erreur", error}});
+			send_senders(false);
+			send_status();
+		});
+	} else if (action == "fermer_vue") {
+		const std::string id = m.value("id", "");
+		g->worker->post([id] {
+			g->engine.close_view(id);
+			send_senders(false);
 			send_status();
 		});
 	} else if (action == "appliquer" && m.contains("sources")) {
@@ -331,10 +380,24 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 			g->web->PostWebMessageAsJson(to_wide(*text).c_str());
 		return 0;
 	}
-	case WM_TIMER:
-		if (IsWindowVisible(hwnd) && g->worker->pending() == 0)
-			g->worker->post(send_status);
+	case WM_TIMER: {
+		// État chaque seconde, émetteurs du réseau toutes les 5 s, tant que la fenêtre est ouverte ;
+		// fenêtre cachée, on retire quand même les visionneuses fermées
+		static unsigned ticks = 0;
+		ticks++;
+		if (g->worker->pending() == 0) {
+			if (!IsWindowVisible(hwnd))
+				g->worker->post([] { g->engine.views(); });
+			else if (ticks % 5 == 0)
+				g->worker->post([] {
+					send_status();
+					send_senders(true);
+				});
+			else
+				g->worker->post(send_status);
+		}
 		return 0;
+	}
 	case WM_DESTROY:
 		Shell_NotifyIconW(NIM_DELETE, &g->tray);
 		PostQuitMessage(0);

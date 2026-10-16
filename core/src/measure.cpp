@@ -1,4 +1,4 @@
-#include "measure.h"
+#include "flash/measure.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -13,7 +13,7 @@
 // Les lignes s'accumulent en mémoire et un fil les écrit toutes les 200 ms : aucun fil
 // temps réel n'attend jamais le disque.
 
-namespace measure {
+namespace flash::measure {
 
 namespace {
 
@@ -119,6 +119,12 @@ void tick(const void *source, uint64_t tick_ns)
 	add("D,%llu,%llu\n", (unsigned long long)key, (unsigned long long)tick_ns);
 }
 
+void shown(uint64_t key, uint64_t shown_ns)
+{
+	if (enabled())
+		add("D,%llu,%llu\n", (unsigned long long)key, (unsigned long long)shown_ns);
+}
+
 void beep(uint64_t onset_ns)
 {
 	if (enabled())
@@ -147,4 +153,4 @@ void shutdown()
 	g_enabled = false;
 }
 
-} // namespace measure
+} // namespace flash::measure

@@ -1,4 +1,5 @@
 add_library(flashcore STATIC
+  src/audio_decoder.cpp
   src/audio_encoder.cpp
   src/clock.cpp
   src/converter.cpp
@@ -9,9 +10,12 @@ add_library(flashcore STATIC
   src/input_wasapi.cpp
   src/input_wgc.cpp
   src/log.cpp
+  src/measure.cpp
+  src/mf_decoder.cpp
   src/mf_encoder.cpp
   src/mire.cpp
   src/nvenc.cpp
+  src/output_wasapi.cpp
   src/pairing.cpp
   src/receiver.cpp
   src/security.cpp

@@ -53,6 +53,24 @@ select { font: inherit; padding: 5px; border-radius: 6px; border: 1px solid var(
 .ligne span { flex: 1; }
 .barre { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .reglage { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
+input[type=text] {
+  font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--bord); background: var(--carte);
+  color: var(--texte); min-width: 0; user-select: text;
+}
+input.code-saisi { width: 120px; font-family: Consolas, "Cascadia Mono", monospace; letter-spacing: 1px; text-transform: uppercase; }
+.emetteur { padding: 10px 0; border-top: 1px solid var(--bord); }
+.emetteur:first-child { border-top: 0; }
+.emetteur .titre { display: flex; align-items: baseline; gap: 8px; }
+.emetteur .titre strong { font-weight: 600; }
+.emetteur .titre small { color: var(--discret); }
+.emetteur .commandes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.emetteur .commandes label { color: var(--discret); font-size: 13px; }
+.emetteur .vue { margin-top: 6px; color: var(--ok); font-size: 13px; font-variant-numeric: tabular-nums; }
+.emetteur .erreur, .erreur { color: var(--alerte); font-size: 13px; margin-top: 6px; }
+.lien { border: 0; background: none; padding: 0; color: var(--discret); text-decoration: underline; font-size: 13px; }
+details.manuel { margin-top: 12px; color: var(--discret); }
+details.manuel summary { cursor: pointer; font-size: 13px; }
+details.manuel .reglage { justify-content: flex-start; }
 </style>
 </head>
 <body>
@@ -79,6 +97,22 @@ select { font: inherit; padding: 5px; border-radius: 6px; border: 1px solid var(
         <button id="annuler" disabled>Annuler</button>
         <button id="appliquer" class="principal" disabled>Appliquer</button>
       </div>
+    </section>
+    <section>
+      <h2>Regarder</h2>
+      <p class="aide">Les PC du réseau où FLASH est ouvert. Ce PC y figure aussi, pour voir ce qu'il envoie.</p>
+      <div id="emetteurs"><div class="vide">Recherche…</div></div>
+      <details class="manuel">
+        <summary>Un PC n'apparaît pas ?</summary>
+        <p class="aide">L'ajouter par son adresse IP, avec le code affiché par FLASH sur ce PC-là.</p>
+        <div class="reglage">
+          <input type="text" id="adresse-manuelle" placeholder="192.168.1.20">
+          <input type="text" id="code-manuel" class="code-saisi" placeholder="Code" maxlength="9">
+          <button id="appairer-manuel">Appairer</button>
+        </div>
+        <div class="erreur" id="erreur-manuelle"></div>
+      </details>
+      <div class="barre"><button id="chercher">Chercher à nouveau</button></div>
     </section>
   </div>
   <div>
@@ -123,6 +157,8 @@ select { font: inherit; padding: 5px; border-radius: 6px; border: 1px solid var(
 <script>
 const $ = id => document.getElementById(id);
 const envoyer = (action, donnees = {}) => window.chrome.webview.postMessage({ action, ...donnees });
+const nombre = (x, decimales = 1) =>
+  x.toLocaleString("fr-FR", { minimumFractionDigits: decimales, maximumFractionDigits: decimales });
 
 let listes = { ecrans: [], fenetres: [], applis: [], micros: [] };
 let choisies = [];      // sources telles qu'elles tournent
@@ -198,7 +234,7 @@ function dessinerEtat(e) {
   for (const t of e.pistes) {
     const p = [...document.querySelectorAll(".piste")].find(x => x.dataset.nom.toLowerCase() === t.nom.toLowerCase());
     if (!p) continue;
-    p.textContent = !t.active ? "en pause" : t.video ? Math.round(t.ips) + " i/s, " + (t.kbps / 1000).toFixed(1) + " Mb/s"
+    p.textContent = !t.active ? "en pause" : t.video ? Math.round(t.ips) + " i/s, " + nombre(t.kbps / 1000) + " Mb/s"
                                            : Math.round(t.kbps) + " kb/s";
   }
   const r = $("recepteurs");
@@ -235,6 +271,145 @@ $("ajouter-fenetre").onclick = () => {
   const v = $("nouvelle-fenetre").value;
   if (v && !contient({ type: "fenetre", valeur: v })) { brouillon.push({ type: "fenetre", valeur: v }); dessinerSources(); majBoutons(); }
 };
+// ---------- Regarder ----------
+
+let emetteurs = [];
+let sorties = [];
+let vues = {};          // état des visionneuses ouvertes, par émetteur
+const choix = {};       // pistes choisies, gardées d'une recherche à l'autre
+const erreurs = {};     // dernier échec d'appairage, par émetteur
+
+function el(tag, props = {}, ...enfants) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...enfants);
+  return e;
+}
+const option = (valeur, texte) => el("option", { value: valeur, textContent: texte });
+const pluriel = (n, mot) => n + " " + mot + (n > 1 ? "s" : "");
+
+function choixDe(e) {
+  if (!choix[e.id]) {
+    const video = e.pistes.find(p => p.video);
+    const sons = e.pistes.filter(p => !p.video);
+    // Aperçu de ce PC : sans le son, qu'on entend déjà
+    choix[e.id] = { video: video ? video.nom : "-", son: e.moi || !sons.length ? "" : sons.length > 1 ? "*" : sons[0].nom, sortie: "" };
+  }
+  return choix[e.id];
+}
+
+function texteVue(v) {
+  if (!v) return "Ouverture…";
+  switch (v.etat) {
+    case "connexion": return "Connexion…";
+    case "attente": return "En attente de l'image…";
+    case "sans_image": return "Pas d'image";
+    case "erreur": return v.message;
+    case "son": return "Son seulement, " + nombre(v.debit) + " Mb/s";
+  }
+  let t = Math.round(v.ips) + " i/s, " + nombre(v.debit) + " Mb/s";
+  if (v.latence_ms) t += ", " + Math.round(v.latence_ms) + " ms de latence";
+  if (v.pertes) t += ", " + pluriel(v.pertes, "paquet") + " perdu" + (v.pertes > 1 ? "s" : "");
+  return t;
+}
+
+function commandes(e) {
+  const cmd = el("div", { className: "commandes" });
+  const videos = e.pistes.filter(p => p.video), sons = e.pistes.filter(p => !p.video);
+  if (!(e.moi || e.appaire || e.ouvert)) {
+    const code = el("input", { type: "text", className: "code-saisi", placeholder: "Code", maxLength: 9 });
+    const b = el("button", { textContent: "Appairer" });
+    b.onclick = () => {
+      erreurs[e.id] = "";
+      b.disabled = true;
+      envoyer("appairer", { id: e.id, adresse: e.adresse, port: e.port_appairage || 0, code: code.value });
+    };
+    code.onkeydown = ev => { if (ev.key === "Enter") b.click(); };
+    cmd.append(el("label", { textContent: "Code affiché sur ce PC-là :" }), code, b);
+    return cmd;
+  }
+  if (e.vue) {
+    const b = el("button", { textContent: "Fermer la fenêtre" });
+    b.onclick = () => envoyer("fermer_vue", { id: e.id });
+    cmd.append(b);
+    return cmd;
+  }
+  const c = choixDe(e);
+  if (e.trouve) {
+    const image = el("select");
+    image.append(...videos.map(p => option(p.nom, p.nom)), option("-", "Sans image"));
+    image.value = c.video;
+    image.onchange = () => { c.video = image.value; };
+    const son = el("select");
+    son.append(option("", "Sans le son"));
+    if (sons.length > 1) son.append(option("*", "Tous les sons"));
+    son.append(...sons.map(p => option(p.nom, p.nom)));
+    son.value = c.son;
+    son.onchange = () => { c.son = son.value; };
+    cmd.append(image, son);
+  }
+  const sortie = el("select");
+  sortie.append(option("", "Sortie son de Windows"), ...sorties.map(s => option(s, s)));
+  sortie.value = c.sortie;
+  sortie.onchange = () => { c.sortie = sortie.value; };
+  const b = el("button", { textContent: "Regarder", className: "principal" });
+  b.onclick = () => envoyer("regarder", {
+    id: e.id, moi: e.moi, video: e.trouve ? c.video : "", son: !e.trouve ? ["*"] : c.son ? [c.son] : [], sortie: c.sortie
+  });
+  cmd.append(sortie, b);
+  if (e.appaire && !e.moi) {
+    const o = el("button", { className: "lien", textContent: "Oublier" });
+    o.onclick = () => envoyer("oublier", { id: e.id });
+    cmd.append(o);
+  }
+  return cmd;
+}
+
+function dessinerEmetteurs() {
+  const zone = $("emetteurs");
+  // Pas de redessin pendant qu'on tape un code ou qu'on choisit une piste
+  const actif = document.activeElement;
+  if (zone.contains(actif) && (actif.tagName === "INPUT" || actif.tagName === "SELECT")) return;
+  if (!emetteurs.length) {
+    zone.replaceChildren(el("div", { className: "vide", textContent: "Aucun PC trouvé pour l'instant" }));
+    return;
+  }
+  zone.replaceChildren(...emetteurs.map(e => {
+    const videos = e.pistes.filter(p => p.video).length, sons = e.pistes.filter(p => !p.video).length;
+    const detail = !e.trouve ? "introuvable pour l'instant"
+      : [e.moi ? "ce PC" : "", videos ? pluriel(videos, "image") : "", sons ? pluriel(sons, "son") : ""]
+          .filter(Boolean).join(", ") || "n'envoie rien";
+    const bloc = el("div", { className: "emetteur" },
+      el("div", { className: "titre" }, el("strong", { textContent: e.nom }), el("small", { textContent: detail })),
+      commandes(e));
+    if (e.vue) {
+      const v = el("div", { className: "vue", textContent: texteVue(vues[e.id]) });
+      v.dataset.id = e.id;
+      bloc.append(v);
+    }
+    if (erreurs[e.id]) bloc.append(el("div", { className: "erreur", textContent: erreurs[e.id] }));
+    return bloc;
+  }));
+}
+
+// Visionneuses : état chaque seconde ; une fenêtre fermée à la main disparaît de la liste
+function majVues(liste) {
+  vues = {};
+  for (const v of liste) vues[v.id] = v;
+  let change = false;
+  for (const e of emetteurs) {
+    const ouverte = e.id in vues;
+    if (e.vue !== ouverte) { e.vue = ouverte; change = true; }
+  }
+  if (change) dessinerEmetteurs();
+  for (const d of document.querySelectorAll(".vue[data-id]")) d.textContent = texteVue(vues[d.dataset.id]);
+}
+
+$("chercher").onclick = () => envoyer("chercher");
+$("appairer-manuel").onclick = () => {
+  $("erreur-manuelle").textContent = "";
+  envoyer("appairer", { id: "", adresse: $("adresse-manuelle").value.trim(), port: 0, code: $("code-manuel").value });
+};
+
 $("appliquer").onclick = () => { envoyer("appliquer", { sources: brouillon }); };
 $("annuler").onclick = () => { brouillon = choisies.map(s => ({ ...s })); dessinerSources(); majBoutons(); };
 $("nouveau-code").onclick = () => envoyer("nouveau_code");
@@ -250,6 +425,18 @@ window.chrome.webview.addEventListener("message", ev => {
     majBoutons();
   } else if (m.type === "etat") {
     dessinerEtat(m);
+    majVues(m.vues || []);
+  } else if (m.type === "emetteurs") {
+    emetteurs = m.liste;
+    sorties = m.sorties;
+    for (const e of emetteurs) e.vue = e.vue || e.id in vues;
+    dessinerEmetteurs();
+  } else if (m.type === "appairage") {
+    if (m.id) erreurs[m.id] = m.ok ? "" : m.erreur;
+    else if (m.ok) { $("adresse-manuelle").value = ""; $("code-manuel").value = ""; }
+    else $("erreur-manuelle").textContent = m.erreur;
+    if (document.activeElement) document.activeElement.blur();
+    dessinerEmetteurs();
   }
 });
 document.addEventListener("contextmenu", e => e.preventDefault());

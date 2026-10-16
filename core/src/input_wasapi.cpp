@@ -1,3 +1,4 @@
+#include "wasapi.h"
 #include "flash/clock.h"
 #include "flash/inputs.h"
 #include "flash/log.h"
@@ -122,37 +123,6 @@ ComPtr<IAudioClient> activate_process_loopback(DWORD pid, bool include)
 	return client;
 }
 
-ComPtr<IMMDevice> find_capture_device(const std::wstring &match)
-{
-	ComPtr<IMMDeviceEnumerator> en;
-	if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en))))
-		return nullptr;
-	ComPtr<IMMDevice> dev;
-	if (match.empty()) {
-		en->GetDefaultAudioEndpoint(eCapture, eConsole, &dev);
-		return dev;
-	}
-	ComPtr<IMMDeviceCollection> list;
-	en->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &list);
-	UINT n = 0;
-	if (list)
-		list->GetCount(&n);
-	for (UINT i = 0; i < n; i++) {
-		ComPtr<IMMDevice> d;
-		ComPtr<IPropertyStore> props;
-		PROPVARIANT name;
-		PropVariantInit(&name);
-		if (SUCCEEDED(list->Item(i, &d)) && SUCCEEDED(d->OpenPropertyStore(STGM_READ, &props)) &&
-		    SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &name)) && name.vt == VT_LPWSTR &&
-		    lower(name.pwszVal).find(lower(match)) != std::wstring::npos) {
-			PropVariantClear(&name);
-			return d;
-		}
-		PropVariantClear(&name);
-	}
-	return nullptr;
-}
-
 // Capture WASAPI partagée, pilotée par événement, convertie par Windows en 48 kHz stéréo
 // flottant quel que soit le format du périphérique.
 class WasapiInput final : public AudioInput {
@@ -207,7 +177,7 @@ private:
 			FLOG_I("Son de « %s » : processus %lu", name_.c_str(), (unsigned long)pid);
 			return activate_process_loopback(pid, true);
 		}
-		ComPtr<IMMDevice> dev = find_capture_device(target_);
+		ComPtr<IMMDevice> dev = find_audio_device(eCapture, target_);
 		ComPtr<IAudioClient> client;
 		if (dev)
 			dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void **)client.GetAddressOf());
@@ -378,7 +348,55 @@ std::vector<AudioAppInfo> list_audio_apps()
 	return out;
 }
 
-std::vector<std::string> list_microphones()
+namespace {
+
+std::string device_name(IMMDevice *d)
+{
+	std::string out;
+	ComPtr<IPropertyStore> props;
+	PROPVARIANT name;
+	PropVariantInit(&name);
+	if (SUCCEEDED(d->OpenPropertyStore(STGM_READ, &props)) && SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &name)) &&
+	    name.vt == VT_LPWSTR)
+		out = to_utf8(name.pwszVal);
+	PropVariantClear(&name);
+	return out;
+}
+
+} // namespace
+
+ComPtr<IMMDevice> find_audio_device(EDataFlow flow, const std::wstring &match, std::string *name)
+{
+	ComPtr<IMMDeviceEnumerator> en;
+	if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en))))
+		return nullptr;
+	ComPtr<IMMDevice> dev;
+	if (match.empty()) {
+		en->GetDefaultAudioEndpoint(flow, eConsole, &dev);
+		if (dev && name)
+			*name = device_name(dev.Get());
+		return dev;
+	}
+	ComPtr<IMMDeviceCollection> list;
+	en->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &list);
+	UINT n = 0;
+	if (list)
+		list->GetCount(&n);
+	for (UINT i = 0; i < n; i++) {
+		ComPtr<IMMDevice> d;
+		if (FAILED(list->Item(i, &d)))
+			continue;
+		const std::string full = device_name(d.Get());
+		if (lower(to_wide(full)).find(lower(match)) != std::wstring::npos) {
+			if (name)
+				*name = full;
+			return d;
+		}
+	}
+	return nullptr;
+}
+
+std::vector<std::string> list_audio_devices(EDataFlow flow)
 {
 	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 	std::vector<std::string> out;
@@ -386,19 +404,27 @@ std::vector<std::string> list_microphones()
 	ComPtr<IMMDeviceCollection> list;
 	UINT n = 0;
 	if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en))) &&
-	    SUCCEEDED(en->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &list)))
+	    SUCCEEDED(en->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &list)))
 		list->GetCount(&n);
 	for (UINT i = 0; i < n; i++) {
 		ComPtr<IMMDevice> d;
-		ComPtr<IPropertyStore> props;
-		PROPVARIANT name;
-		PropVariantInit(&name);
-		if (SUCCEEDED(list->Item(i, &d)) && SUCCEEDED(d->OpenPropertyStore(STGM_READ, &props)) &&
-		    SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &name)) && name.vt == VT_LPWSTR)
-			out.push_back(to_utf8(name.pwszVal));
-		PropVariantClear(&name);
+		if (SUCCEEDED(list->Item(i, &d))) {
+			const std::string name = device_name(d.Get());
+			if (!name.empty())
+				out.push_back(name);
+		}
 	}
 	return out;
+}
+
+std::vector<std::string> list_microphones()
+{
+	return list_audio_devices(eCapture);
+}
+
+std::vector<std::string> list_audio_outputs()
+{
+	return list_audio_devices(eRender);
 }
 
 } // namespace flash

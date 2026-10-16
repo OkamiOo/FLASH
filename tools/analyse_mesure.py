@@ -1,8 +1,8 @@
-"""Analyse du journal de mesure écrit par le plugin (variable FLASH_MESURE).
+"""Analyse du journal de mesure écrit par le plugin ou la visionneuse (variable FLASH_MESURE).
 
 Usage : python tools/analyse_mesure.py mesure.csv [--ignorer 3]
 
-Toutes les heures du journal sont dans l'horloge d'OBS. En boucle locale, l'heure de
+Toutes les heures du journal sont dans l'horloge commune (celle d'OBS). En boucle locale, l'heure de
 capture inscrite dans la mire est dans la même horloge : la latence se lit directement.
 """
 
@@ -81,13 +81,13 @@ def main():
 
     print(f"Durée analysée : {duree:.1f} s, {len(keys)} images reçues, {manquantes} perdues avant décodage, "
           f"{jamais} jamais affichées")
-    print("Latence image-à-image (ms), rendu -> image composée par OBS :")
+    print("Latence image-à-image (ms), rendu -> image montrée (OBS ou visionneuse) :")
     resume("total", total)
     resume("rendu -> capture (composition Windows)", compo)
     resume("capture -> réception (encodage+SRT)", transport)
     resume("réception -> décodée", decode)
-    resume("décodée -> remise à OBS", attente)
-    resume("remise -> rendu OBS", rendu)
+    resume("décodée -> remise", attente)
+    resume("remise -> affichage", rendu)
 
     # Synchro. Flashs et bips tombent sur des secondes pleines de l'horloge commune : pour
     # chaque seconde, on prend la première image affichée avec le flash et le bip le plus

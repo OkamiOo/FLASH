@@ -1,9 +1,9 @@
 #include "audio_track.h"
 #include "connection.h"
-#include "measure.h"
 
 #include <flash/clock.h>
 #include <flash/log.h>
+#include <flash/measure.h>
 #include <flash/ts.h>
 
 extern "C" {
@@ -168,7 +168,7 @@ void AudioTrack::output(const AVFrame *frame, uint64_t intended)
 	for (obs_source_t *s : sources_)
 		obs_source_output_audio(s, &a);
 
-	if (measure::enabled())
+	if (flash::measure::enabled())
 		detect_beep(out_[0].data(), (uint32_t)n, next_ts_);
 
 	// Même calcul qu'OBS pour enchaîner les blocs
@@ -180,7 +180,7 @@ void AudioTrack::detect_beep(const float *left, uint32_t frames, uint64_t first_
 	for (uint32_t i = 0; i < frames; i++) {
 		if (std::fabs(left[i]) > 0.05f) {
 			if (!in_beep_ && quiet_samples_ > out_rate_ / 10)
-				measure::beep(first_ns + (uint64_t)i * 1'000'000'000ULL / out_rate_);
+				flash::measure::beep(first_ns + (uint64_t)i * 1'000'000'000ULL / out_rate_);
 			in_beep_ = true;
 			quiet_samples_ = 0;
 		} else if (++quiet_samples_ > out_rate_ / 100) {

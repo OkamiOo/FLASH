@@ -1,19 +1,22 @@
 #pragma once
 
+#include "viewer.h"
+
 #include <flash/discovery.h>
 #include <flash/pairing.h>
 #include <flash/sender.h>
 
 #include <nlohmann/json.hpp>
 
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
-// Le cœur de l'appli : réglages, sources choisies, envoi, appairage et découverte.
-// Les réglages vivent dans %APPDATA%\FLASH\reglages.json ; les clés des récepteurs y sont
-// chiffrées pour l'utilisateur Windows (DPAPI).
+// Le cœur de l'appli : réglages, sources choisies, envoi, appairage, découverte et
+// visionneuses. Les réglages vivent dans %APPDATA%\FLASH\reglages.json ; les clés des
+// récepteurs et des émetteurs appairés y sont chiffrées pour l'utilisateur Windows (DPAPI).
 
 struct SourceChoice {
 	std::string kind; // mire, ecran, fenetre, appli, systeme, micro
@@ -33,6 +36,18 @@ struct EngineSettings {
 	bool open = false; // accepter les récepteurs sans appairage
 };
 
+// Ce qu'on veut regarder : un émetteur et ses pistes (voir ViewerOptions)
+struct WatchRequest {
+	std::string sender;  // identifiant de l'émetteur, « moi » pour ce PC
+	std::string address; // à défaut, adresse saisie à la main (émetteur ouvert)
+	std::string video;
+	std::vector<std::string> audio;
+	std::string output;
+	bool fullscreen = false;
+	int screen = 0;
+	bool background = false;
+};
+
 class Engine {
 public:
 	Engine();
@@ -41,8 +56,9 @@ public:
 	// Réglages à utiliser au démarrage (ligne de commande), sans rien redémarrer
 	void preset(const EngineSettings &s);
 	// persist : sources et réglages lus et enregistrés sur le disque (faux en ligne de
-	// commande, où seuls l'identité et les récepteurs appairés sont conservés)
-	bool start(bool persist);
+	// commande, où seuls l'identité et les appairages sont conservés). network : répondre à la
+	// découverte et aux appairages (faux pour une visionneuse seule en ligne de commande).
+	bool start(bool persist, bool network = true);
 	void stop();
 
 	std::vector<SourceChoice> sources();
@@ -57,18 +73,31 @@ public:
 	std::vector<flash::PeerInfo> receivers();
 	void forget_receiver(const std::string &id);
 
-	nlohmann::json status(); // état pour l'interface (récepteurs, pistes, débits)
+	// Réception : émetteurs du réseau, appairage avec l'un d'eux, visionneuses
+	std::vector<flash::SenderAnnounce> discover(bool refresh);
+	nlohmann::json senders_json(bool refresh); // trouvés et appairés, pour l'interface
+	flash::PairingResult pair(const std::string &address, uint16_t port, const std::string &code);
+	void forget_sender(const std::string &id);
+	bool watch(const WatchRequest &request, std::string &error);
+	void close_view(const std::string &sender);
+	size_t views(); // visionneuses ouvertes (les fenêtres fermées sont retirées)
+
+	nlohmann::json status(); // état pour l'interface (récepteurs, pistes, débits, visionneuses)
 
 private:
+	enum Part : unsigned { kIdentity = 1, kReceivers = 2, kSenders = 4, kSettings = 8 };
+
 	void load();
-	void save(); // data_ tenu
+	void save(unsigned parts); // data_ tenu ; seules ces parties du fichier sont réécrites
 	void start_network();
 	void restart_sender();
 	bool authorize(const std::string &stream_id, std::string &passphrase);
 	std::string announce();
+	bool refresh_target(const std::string &sender, flash::SrtOptions &o, int &failures);
+	nlohmann::json views_json();
 
-	struct Receiver {
-		std::string id, name, key;
+	struct Peer {
+		std::string id, name, key, address;
 	};
 
 	// mutex_ sérialise les opérations (redémarrages) ; data_ protège les données lues par les
@@ -76,9 +105,11 @@ private:
 	std::recursive_mutex mutex_;
 	std::mutex data_;
 	bool persist_ = false;
-	std::string path_;
+	bool network_ = true;
 	std::string id_, name_, code_;
-	std::vector<Receiver> receivers_;
+	std::string self_key_; // aperçu de ce PC par sa propre visionneuse, le temps de la session
+	std::vector<Peer> receivers_;
+	std::vector<Peer> senders_; // émetteurs avec lesquels ce PC s'est appairé
 	std::vector<SourceChoice> sources_;
 	EngineSettings settings_;
 
@@ -89,4 +120,11 @@ private:
 	std::string tracks_json_ = "[]";
 	std::vector<flash::TrackStats> last_stats_;
 	uint64_t last_stats_ns_ = 0;
+
+	std::mutex discover_mutex_;
+	std::vector<flash::SenderAnnounce> seen_;
+	uint64_t seen_at_ = 0;
+
+	std::mutex views_mutex_;
+	std::map<std::string, std::unique_ptr<Viewer>> views_;
 };

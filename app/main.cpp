@@ -8,6 +8,7 @@
 #include <flash/discovery.h>
 #include <flash/inputs.h>
 #include <flash/log.h>
+#include <flash/measure.h>
 #include <flash/pairing.h>
 #include <flash/security.h>
 
@@ -34,9 +35,17 @@ const char *kUsage = R"(Usage :
   flash                             interface
   flash --liste                     écrans, fenêtres, applis qui jouent du son, micros
   flash --chercher                  émetteurs FLASH du réseau
-  flash --appairer adresse code     appairage d'essai, comme le ferait un récepteur
+  flash --appairer adresse code     appaire ce PC (pour regarder) avec l'émetteur à cette adresse
   flash [sources] [réglages]        envoie les sources choisies
+  flash --voir émetteur [options]   ouvre une visionneuse (avec ou sans envoi)
   flash --banc [--sortie nom] [--ecran N]   fenêtre d'essai (image + bips) à capturer
+
+Visionneuse (émetteur : nom, identifiant, adresse IP, ou « moi » pour ce PC) :
+  --piste nom            piste vidéo (par défaut la première ; « - » : aucune)
+  --son nom              piste son, autant que voulu (« tous » : toutes)
+  --sortie nom           sortie son (par défaut celle de Windows)
+  --plein-ecran          fenêtre en plein écran
+  --ecran-vue N          écran où ouvrir la fenêtre
 
 Sources (autant que voulu) :
   --mire                 mire de mesure et son bip
@@ -69,6 +78,8 @@ struct Args {
 	std::vector<SourceChoice> sources;
 	EngineSettings settings;
 	int duration_s = 0;
+	std::string watch;
+	WatchRequest view;
 };
 
 bool parse_args(int argc, char **argv, Args &a)
@@ -126,10 +137,22 @@ bool parse_args(int argc, char **argv, Args &a)
 			a.settings.cursor = false;
 		else if (arg == "--duree")
 			a.duration_s = std::atoi(next().c_str());
+		else if (arg == "--voir")
+			a.watch = next();
+		else if (arg == "--piste")
+			a.view.video = next();
+		else if (arg == "--son") {
+			const std::string s = next();
+			a.view.audio.push_back(s == "tous" ? "*" : s);
+		} else if (arg == "--plein-ecran")
+			a.view.fullscreen = true;
+		else if (arg == "--ecran-vue")
+			a.view.screen = std::atoi(next().c_str());
 		else
 			return false;
 	}
-	return a.list || a.search || a.banc || !a.pair_address.empty() || !a.sources.empty();
+	a.view.output = a.output;
+	return a.list || a.search || a.banc || !a.pair_address.empty() || !a.sources.empty() || !a.watch.empty();
 }
 
 void print_lists()
@@ -164,7 +187,9 @@ void print_senders()
 
 int run_pairing(const Args &args)
 {
-	const PairingResult r = pair_with_sender(args.pair_address, kPairingPort, args.pair_code, {new_device_id(), "Essai"});
+	Engine engine;
+	engine.start(false, false);
+	const PairingResult r = engine.pair(args.pair_address, kPairingPort, args.pair_code);
 	if (!r.ok) {
 		std::printf("Échec : %s\n", r.error.c_str());
 		return 1;
@@ -173,17 +198,68 @@ int run_pairing(const Args &args)
 	return 0;
 }
 
+// Émetteur désigné en ligne de commande : identifiant, nom du PC, adresse IP, ou « moi »
+bool resolve_watch(Engine &engine, const std::string &target, WatchRequest &r)
+{
+	if (target == "moi") {
+		r.sender = "moi";
+		return true;
+	}
+	for (const SenderAnnounce &s : engine.discover(true)) {
+		if (s.id == target || _stricmp(s.name.c_str(), target.c_str()) == 0 || s.address == target) {
+			r.sender = s.id;
+			return true;
+		}
+	}
+	if (target.find('.') != std::string::npos) {
+		r.address = target; // émetteur ouvert, hors de portée de la découverte
+		return true;
+	}
+	r.sender = target; // appairé, peut-être pas encore lancé
+	return true;
+}
+
+std::string view_line(const nlohmann::json &v)
+{
+	char buf[200];
+	std::snprintf(buf, sizeof(buf), " | visionneuse : %s, %.0f i/s, %.1f Mb/s", v.value("etat", "").c_str(),
+		      v.value("ips", 0.0), v.value("debit", 0.0));
+	std::string line = buf;
+	if (v.contains("latence_ms")) {
+		std::snprintf(buf, sizeof(buf), ", latence %.1f ms", v["latence_ms"].get<double>());
+		line += buf;
+	}
+	if (v.value("sautees", 0) > 0)
+		line += ", " + std::to_string(v["sautees"].get<int>()) + " sautée(s)";
+	if (!v.value("message", "").empty())
+		line += " (" + v["message"].get<std::string>() + ")";
+	return line;
+}
+
 int run_console(const Args &args)
 {
 	enable_precise_timers();
+	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 	Engine engine;
 	const EngineSettings &s = args.settings;
 	engine.preset(s);
-	if (!engine.start(false))
+	const bool sending = !args.sources.empty();
+	if (!engine.start(false, sending))
 		return 1;
-	engine.set_sources(args.sources);
-	FLOG_I("« %s » : envoi sur %s:%u, code d'invitation %s (Ctrl+C pour arrêter)", engine.name().c_str(),
-	       s.address.c_str(), s.port, engine.code().c_str());
+	if (sending) {
+		engine.set_sources(args.sources);
+		FLOG_I("« %s » : envoi sur %s:%u, code d'invitation %s (Ctrl+C pour arrêter)", engine.name().c_str(),
+		       s.address.c_str(), s.port, engine.code().c_str());
+	}
+	if (!args.watch.empty()) {
+		WatchRequest r = args.view;
+		r.background = true; // en essai, la fenêtre ne prend pas la main sur le clavier
+		std::string error;
+		if (!resolve_watch(engine, args.watch, r) || !engine.watch(r, error)) {
+			std::printf("Visionneuse impossible : %s\n", error.c_str());
+			return 1;
+		}
+	}
 
 	const uint64_t start = now_ns();
 	uint64_t report = start + 5'000'000'000ULL;
@@ -193,11 +269,15 @@ int run_console(const Args &args)
 		const uint64_t now = now_ns();
 		if (args.duration_s > 0 && now - start >= (uint64_t)args.duration_s * 1'000'000'000ULL)
 			break;
+		if (!args.watch.empty() && engine.views() == 0)
+			break; // fenêtre fermée
 		if (now < report)
 			continue;
 		report += 5'000'000'000ULL;
 		const nlohmann::json st = engine.status();
 		std::string line = std::to_string(st["connectes"].get<size_t>()) + " récepteur(s)";
+		for (const auto &v : st["vues"])
+			line += view_line(v);
 		for (const auto &t : st["pistes"]) {
 			char buf[160];
 			if (!t["active"].get<bool>())
@@ -214,6 +294,7 @@ int run_console(const Args &args)
 		FLOG_I("%s", line.c_str());
 	}
 	engine.stop();
+	measure::shutdown();
 	return 0;
 }
 

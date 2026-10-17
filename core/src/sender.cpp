@@ -227,7 +227,7 @@ bool Sender::add_audio(const std::string &key, std::unique_ptr<AudioInput> input
 	t->stats.key = key;
 	t->stats.name = t->input->name();
 	t->gain = gain;
-	if (!t->encoder.open(2, options_.audio_bps))
+	if (!t->encoder.open(2, options_.audio_bps, options_.audio_frame_ms))
 		return false;
 	t->buf.resize((size_t)t->encoder.frame_size() * 2);
 

@@ -243,6 +243,7 @@ json settings_json()
 		{"codec", format_key(s.codec)},
 		{"adresse", s.address},
 		{"latence", s.latency_ms},
+		{"trame_son", s.audio_frame_ms},
 		{"demarrage", run_at_startup()},
 		{"curseur", s.cursor},
 		{"taille", std::to_string(s.max_w) + "x" + std::to_string(s.max_h)},
@@ -448,6 +449,7 @@ void on_page_message(const json &m)
 		s.codec = format_from_key(m.value("codec", std::string(format_key(s.codec))));
 		s.address = m.value("adresse", s.address);
 		s.latency_ms = m.value("latence", s.latency_ms);
+		s.audio_frame_ms = m.value("trame_son", s.audio_frame_ms) == 5 ? 5 : 10;
 		s.cursor = m.value("curseur", s.cursor);
 		s.encoder = m.value("encodeur", s.encoder);
 		std::sscanf(m.value("taille", std::string()).c_str(), "%ux%u", &s.max_w, &s.max_h);

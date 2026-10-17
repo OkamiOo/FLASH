@@ -24,7 +24,7 @@ struct Target {
 	std::string sender_id;
 	std::string address;
 	uint16_t port = 9710;
-	int latency_ms = 20;
+	int latency_ms = 10;
 	std::string key() const { return sender_id.empty() ? address + ":" + std::to_string(port) : sender_id; }
 };
 

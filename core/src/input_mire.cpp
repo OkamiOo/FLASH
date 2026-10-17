@@ -118,8 +118,9 @@ private:
 	std::vector<uint8_t> background_;
 };
 
-// Bip de 1 kHz pendant 50 ms à chaque seconde pile après t0, livré par blocs de 10 ms
-// au moment où le bloc est complet, comme le ferait une carte son.
+// Bip de 1 kHz pendant 50 ms à chaque seconde pile après t0, livré par blocs de 5 ms
+// au moment où le bloc est complet, comme le ferait une carte son (assez fin pour des
+// trames Opus de 5 ms ; avec des trames de 10 ms, rien ne change).
 class BeepInput final : public AudioInput {
 public:
 	explicit BeepInput(uint64_t t0) : t0_(t0) {}
@@ -144,7 +145,7 @@ public:
 private:
 	void run()
 	{
-		constexpr uint32_t kBlock = 480;
+		constexpr uint32_t kBlock = 240;
 		float buf[kBlock * 2];
 		const double w = 2.0 * 3.14159265358979323846 * mire::kBeepHz / mire::kSampleRate;
 		for (uint64_t m = 0; running_; m++) {

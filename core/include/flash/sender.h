@@ -52,6 +52,7 @@ struct SenderOptions {
 	SrtOptions srt;
 	VideoOptions video;
 	int audio_bps = 192000;
+	int audio_frame_ms = 10; // trame Opus : 5 ou 10 ms
 	std::string host_name;
 };
 

@@ -41,7 +41,10 @@ inline flash::Codec format_from_key(const std::string &key)
 struct EngineSettings {
 	std::string address = "0.0.0.0"; // 127.0.0.1 : ce PC seulement
 	uint16_t port = 9710;
-	int latency_ms = 20;
+	// Mode « Câble » par défaut : SRT 10 ms et trames Opus de 5 ms (Wi-Fi 60 et Internet 200 ms,
+	// trames de 10 ms). Ces deux valeurs fixent l'essentiel de la latence (voir CONCEPTION.md, § 18).
+	int latency_ms = 10;
+	int audio_frame_ms = 5; // trame Opus : 5 ou 10 ms
 	uint32_t video_kbps = 25000;
 	flash::Codec codec = flash::Codec::H264; // format voulu (voir Sender)
 	std::string encoder = "auto";

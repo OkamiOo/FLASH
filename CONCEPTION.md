@@ -63,7 +63,8 @@ appairage, découverte, codecs. Tout ce qui touche au temps réel est natif, san
   (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`, arbre de processus inclus). Une appli cochée
   = une piste. Les applis sont suivies par nom d'exécutable : si Discord redémarre, la piste se
   raccroche seule. Pistes en plus : micro, son du système.
-- Opus : libopus, 48 kHz, trames de 10 ms, mode `RESTRICTED_LOWDELAY`.
+- Opus : libopus, 48 kHz, mode `RESTRICTED_LOWDELAY`, trames de 5 ms sur câble et de 10 ms en
+  Wi-Fi ou sur Internet (§ 18).
 - Horloge : tout est horodaté en QPC. Vidéo : `SystemRelativeTime` de la trame WGC.
   Son : position QPC rendue par `IAudioCaptureClient::GetBuffer`, recalée en continu pour
   suivre la dérive de la carte son.
@@ -81,9 +82,9 @@ appairage, découverte, codecs. Tout ce qui touche au temps réel est natif, san
   d'adaptation). Le démultiplexeur FLASH livre l'image dès ce paquet, sans attendre la suivante.
   VLC et FFmpeg ignorent ce marqueur.
 - SRT en mode live, une connexion par couple émetteur/récepteur, toutes les pistes dedans.
-  L'émetteur écoute (port UDP 9710), les récepteurs appellent. Latence SRT : 20 ms en filaire,
-  60 ms en Wi-Fi, choisie seule (mode Auto) d'après le RTT et les pertes. Paquets limités à
-  1316 octets, envoyés dès la fin d'une image ou d'une trame son.
+  L'émetteur écoute (port UDP 9710), les récepteurs appellent. Latence SRT : 10 ms en filaire
+  (20 ms avant le § 18), 60 ms en Wi-Fi, choisie seule (mode Auto) d'après le RTT et les pertes.
+  Paquets limités à 1316 octets, envoyés dès la fin d'une image ou d'une trame son.
 - Voie de retour sur la même connexion SRT (bidirectionnelle) : demande d'IDR, pistes voulues
   par le récepteur (les autres ne lui sont pas envoyées), formats vidéo qu'il sait décoder,
   statistiques.
@@ -821,3 +822,55 @@ plusieurs minutes avant.
 
 Mémoire de l'émetteur avec une seule vidéo (mire) et un son : 202 Mo privés, contre 275 Mo avec
 trois vidéos : environ 36 Mo par session NVENC, le reste est commun.
+
+## 18. Réglages de latence sur câble
+
+Le § 17 montrait que l'heure de présentation (38 ms après la capture) est fixée par le son :
+trame Opus de 10 ms, latence SRT de 20 ms, plus quelques millisecondes d'encodage, d'envoi et de
+marge. Deux réglages essayés, chacun seul puis ensemble.
+
+### Mesures
+
+Boucle locale, le 2026-10-17, mire 1080p60 + bip vers le plugin de l'OBS de test, 40 s par
+essai. Le bip est livré par blocs de 5 ms. Le décalage d'horloge se compare d'un essai à
+l'autre ; la latence totale y ajoute la phase entre la mire et le rendu d'OBS (0 à 16,7 ms,
+tirée au hasard à chaque essai).
+
+| Essai | Retard du son à l'arrivée | Décalage d'horloge | Capture -> réception (image) | Latence totale |
+|---|---|---|---|---|
+| Référence : SRT 20 ms, Opus 10 ms | 35,1 ms | 37,2 ms | 23,6 ms | 54,1 ms |
+| SRT 10 ms seul | 32,9 ms | 34,8 ms | 13,6 ms | 45,1 ms |
+| Opus 5 ms seul | 30,2 ms | 32,1 ms | 23,5 ms | 41,6 ms |
+| SRT 10 ms + Opus 5 ms | 20,0 ms | 21,8 ms | 13,3 ms | 28,0 ms |
+| SRT 10 ms + Opus 10 ms, son du système en plus | 32,9 ms | 34,7 ms | 13,6 ms | 34,6 ms |
+| SRT 10 ms + Opus 5 ms, son du système en plus | 20,2 ms | 21,8 ms | 13,6 ms | 24,9 ms |
+| Référence, 1 % de pertes dans chaque sens | 35,1 ms | 37,1 ms | 23,6 ms | 40,9 ms |
+| SRT 10 ms + Opus 5 ms, 1 % de pertes | 20,7 ms | 24,1 ms | 14,2 ms | 33,6 ms |
+
+- Aucune image perdue dans aucun essai, pertes comprises : SRT retransmet à temps avec 10 ms
+  (pertes simulées par un relais UDP local qui jette 1 % des paquets au hasard dans les deux
+  sens ; en boucle locale, l'aller-retour est presque nul, sur un vrai câble il reste sous la
+  milliseconde).
+- Ensemble, les deux réglages retirent 15,4 ms au décalage, donc à la latence de bout en bout,
+  sans toucher à la synchro. SRT 10 ms seul ne gagne que 2,4 ms tant que les trames font 10 ms :
+  le son garde alors un retard en trop d'environ 8 ms, pas encore expliqué. Avec des trames de
+  5 ms, ce surplus disparaît.
+- Le son du système (capture de Windows par paquets de 10 ms) ne retient pas le décalage : le
+  gain tient avec un vrai son capturé.
+- Dans l'essai avec le son du système et des trames de 10 ms, l'heure de présentation tombait
+  pile sur un rendu d'OBS : 69 % des images passaient à 34,6 ms (d'où une médiane sous le
+  décalage), les autres un rendu plus tard (51,2 ms), et l'écart son/image allait de -15,7 à
+  +16,8 ms. C'est le calage du § 11, pas le réglage.
+- Coût des trames de 5 ms : envoi 0,10 -> 0,14 % du processeur, OBS de test 0,97 -> 1,2 % ;
+  débit du son inchangé (même débit Opus), mais deux fois plus de paquets par piste son, sans
+  effet sur un câble. Qualité à débit égal : un peu moins de résolution en fréquence pour Opus
+  avec des trames plus courtes ; pas d'écoute comparative faite.
+
+### Réglages retenus
+
+- Mode « Câble » : latence SRT 10 ms (appli et plugin) et trames Opus de 5 ms. Wi-Fi (60 ms)
+  et Internet (200 ms) gardent leurs valeurs et des trames de 10 ms (moins de paquets sur un
+  réseau partagé).
+- Anciens réglages : un `reglages.json` sans `trame_son` avec 20 ms (l'ancien câble) passe à
+  10 ms et 5 ms ; une source OBS réglée à 20 ms passe à 10 ms.
+- Ligne de commande : `--latence` vaut 10 par défaut, `--trame-son 5|10` vaut 5.

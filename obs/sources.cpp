@@ -27,6 +27,9 @@ Target target_from(obs_data_t *settings)
 	t.sender_id = obs_data_get_string(settings, "emetteur");
 	t.address = obs_data_get_string(settings, "address");
 	t.port = (uint16_t)obs_data_get_int(settings, "port");
+	// 20 ms était l'ancien mode « Câble », devenu 10 ms : la source suit
+	if (obs_data_get_int(settings, "latence") == 20)
+		obs_data_set_int(settings, "latence", 10);
 	t.latency_ms = (int)obs_data_get_int(settings, "latence");
 	return t;
 }
@@ -81,7 +84,7 @@ void source_defaults(obs_data_t *settings)
 	obs_data_set_default_string(settings, "address", "");
 	obs_data_set_default_int(settings, "port", 9710);
 	obs_data_set_default_int(settings, "track", 1);
-	obs_data_set_default_int(settings, "latence", 20);
+	obs_data_set_default_int(settings, "latence", 10);
 }
 
 // ---------- Propriétés ----------
@@ -214,7 +217,7 @@ obs_properties_t *source_properties(void *data)
 
 	obs_property_t *latency = obs_properties_add_list(props, "latence", obs_module_text("Network"),
 							  OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(latency, obs_module_text("NetworkCable"), 20);
+	obs_property_list_add_int(latency, obs_module_text("NetworkCable"), 10);
 	obs_property_list_add_int(latency, obs_module_text("NetworkWifi"), 60);
 	obs_property_list_add_int(latency, obs_module_text("NetworkInternet"), 200);
 

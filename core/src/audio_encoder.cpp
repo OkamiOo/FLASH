@@ -11,8 +11,9 @@ AudioEncoder::~AudioEncoder()
 		opus_encoder_destroy(enc_);
 }
 
-bool AudioEncoder::open(int channels, int bitrate)
+bool AudioEncoder::open(int channels, int bitrate, int frame_ms)
 {
+	frame_size_ = frame_ms == 5 ? 240 : 480;
 	int err = 0;
 	enc_ = opus_encoder_create(48000, channels, OPUS_APPLICATION_RESTRICTED_LOWDELAY, &err);
 	if (err != OPUS_OK || !enc_) {

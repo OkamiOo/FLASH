@@ -527,7 +527,8 @@ function dessinerSons() {
 
 // ---------- Colonne : code et réglages rapides ----------
 let R = {};
-const RESEAUX = [["Câble", 20], ["Wi-Fi", 60], ["Internet", 200]];
+// Mode réseau : nom, latence SRT (ms), trame Opus (ms) (voir CONCEPTION.md, § 18)
+const RESEAUX = [["Câble", 10, 5], ["Wi-Fi", 60, 10], ["Internet", 200, 10]];
 const niveauQualite = v => v < 15 ? "Économie" : v < 40 ? "Haute" : "Très haute";
 function majEtiquettes() {
   const q = +$("qualite").value, n = RESEAUX[+$("reseau").value];
@@ -537,14 +538,14 @@ function majEtiquettes() {
 function envoyerReglages() {
   envoyer("reglages", {
     debit: +$("qualite").value * 1000, codec: R.codec, adresse: R.adresse, latence: RESEAUX[+$("reseau").value][1],
+    trame_son: RESEAUX[+$("reseau").value][2],
     demarrage: R.demarrage, curseur: R.curseur, taille: R.taille, encodeur: R.encodeur
   });
 }
 function dessinerReglages(r) {
   R = { ...r };
   $("qualite").value = Math.round(r.debit / 1000);
-  const i = RESEAUX.findIndex(x => x[1] >= r.latence);
-  $("reseau").value = i < 0 ? 2 : i;
+  $("reseau").value = r.latence <= 20 ? 0 : r.latence <= 60 ? 1 : 2; // 20 : l'ancien câble
   remplissage($("qualite"));
   remplissage($("reseau"));
   majEtiquettes();

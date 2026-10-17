@@ -64,7 +64,8 @@ Réglages :
   --libre                accepte les récepteurs sans appairage
   --port N               port SRT (9710)
   --debit kbps           débit vidéo par piste (25000)
-  --latence ms           latence SRT (20)
+  --latence ms           latence SRT (10 ; Wi-Fi 60, Internet 200)
+  --trame-son ms         trame Opus : 5 ou 10 (5)
   --taille LxH           taille maximale envoyée (1920x1080)
   --hevc                 HEVC au lieu de H.264
   --av1                  AV1 au lieu de H.264 (H.264 tant qu'un récepteur ne décode pas l'AV1)
@@ -139,6 +140,8 @@ bool parse_args(int argc, char **argv, Args &a)
 			a.settings.video_kbps = (uint32_t)std::atoi(next().c_str());
 		else if (arg == "--latence")
 			a.settings.latency_ms = std::atoi(next().c_str());
+		else if (arg == "--trame-son")
+			a.settings.audio_frame_ms = std::atoi(next().c_str()) == 5 ? 5 : 10;
 		else if (arg == "--taille") {
 			if (std::sscanf(next().c_str(), "%ux%u", &a.settings.max_w, &a.settings.max_h) != 2)
 				return false;

@@ -191,6 +191,13 @@ void Engine::load()
 		settings_.address = r.value("adresse", settings_.address);
 		settings_.port = (uint16_t)r.value("port", (int)settings_.port);
 		settings_.latency_ms = r.value("latence", settings_.latency_ms);
+		settings_.audio_frame_ms = r.value("trame_son", settings_.audio_frame_ms) == 5 ? 5 : 10;
+		if (!r.contains("trame_son")) {
+			// Réglages d'avant les trames de 5 ms : 20 ms était le mode « Câble », devenu 10 ms
+			if (settings_.latency_ms == 20)
+				settings_.latency_ms = 10;
+			settings_.audio_frame_ms = settings_.latency_ms <= 10 ? 5 : 10;
+		}
 		settings_.video_kbps = r.value("debit", settings_.video_kbps);
 		if (r.contains("format"))
 			settings_.codec = format_from_key(r.value("format", ""));
@@ -243,7 +250,7 @@ void Engine::save(unsigned parts)
 		j["reglages"] = {{"adresse", settings_.address}, {"port", settings_.port},     {"latence", settings_.latency_ms},
 				 {"debit", settings_.video_kbps},  {"format", format_key(settings_.codec)}, {"encodeur", settings_.encoder},
 				 {"largeur", settings_.max_w},     {"hauteur", settings_.max_h}, {"curseur", settings_.cursor},
-				 {"ouvert", settings_.open}};
+				 {"ouvert", settings_.open}, {"trame_son", settings_.audio_frame_ms}};
 	}
 
 	// Écriture dans un fichier à côté puis remplacement : jamais de réglages à moitié écrits
@@ -367,6 +374,7 @@ void Engine::restart_sender()
 	o.srt.address = s.address;
 	o.srt.port = s.port;
 	o.srt.latency_ms = s.latency_ms;
+	o.audio_frame_ms = s.audio_frame_ms;
 	o.srt.authorize = [this](const std::string &sid, std::string &pass) { return authorize(sid, pass); };
 	o.video = video_options(s);
 	o.host_name = name;
@@ -539,8 +547,8 @@ EngineSettings Engine::settings()
 	return settings_;
 }
 
-// Adresse, port ou latence : envoi refait. Débit, format, encodeur : encodeurs vidéo refaits,
-// captures et pistes son intactes. Taille ou curseur : captures vidéo refaites.
+// Adresse, port, latence ou trame du son : envoi refait. Débit, format, encodeur : encodeurs
+// vidéo refaits, captures et pistes son intactes. Taille ou curseur : captures vidéo refaites.
 void Engine::set_settings(const EngineSettings &s)
 {
 	std::lock_guard lock(mutex_);
@@ -559,7 +567,8 @@ void Engine::set_settings(const EngineSettings &s)
 		pairing_.stop();
 		start_network();
 	}
-	if (rebind || s.port != old.port || s.latency_ms != old.latency_ms || !sender_) {
+	if (rebind || s.port != old.port || s.latency_ms != old.latency_ms || s.audio_frame_ms != old.audio_frame_ms ||
+	    !sender_) {
 		restart_sender();
 		return;
 	}

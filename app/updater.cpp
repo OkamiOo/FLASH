@@ -150,7 +150,7 @@ bool install(const std::string &base, const update::Manifest &m, const fs::path 
 		    update::sha256(current.data(), current.size()) == f.sha256)
 			continue;
 		std::vector<uint8_t> data;
-		if (!update::download(base + f.path, data, error))
+		if (!update::download(base + update::flat_name(f.path), data, error))
 			return false;
 		if (data.size() != f.size || update::sha256(data.data(), data.size()) != f.sha256) {
 			fs::remove_all(staging, ec);

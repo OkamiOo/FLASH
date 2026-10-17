@@ -932,7 +932,13 @@ Même principe que SWIFT, clé propre à FLASH :
   version est installée » et propose la mise à jour, OBS fermé, avec l'élévation seulement si
   elle est nécessaire.
 - Adresses de publication : aucune pour l'instant, l'hébergement reste à choisir.
-  `FLASH_MAJ_URL` en donne une pour les essais.
+  `FLASH_MAJ_URL` en donne une pour les essais. Les fichiers sont publiés à plat, « / »
+  devenant « . » (`plugin-obs.bin.64bit.flash-obs.dll`) : les Releases de GitHub ne gardent pas
+  de dossiers ; `signer` refuse deux chemins qui donneraient le même nom.
+- `tools/publier.ps1` prépare une version dans `dist\publication\<version>\` : refuse de
+  partir avec des modifications non commitées, compile les deux éditions, signe le manifeste,
+  range les fichiers à plat, ajoute le zip, l'installeur, leurs SHA-256 et les notes. Rien
+  n'est envoyé.
 
 ### Retrait complet
 

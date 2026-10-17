@@ -132,6 +132,15 @@ bool safe_path(const std::string &path)
 	return path.back() != '/';
 }
 
+std::string flat_name(const std::string &path)
+{
+	std::string s = path;
+	for (char &c : s)
+		if (c == '/')
+			c = '.';
+	return s;
+}
+
 bool parse_manifest(const std::string &text, const std::string &signature_hex, const uint8_t public_key[32],
 		    Manifest &out, std::string &error)
 {

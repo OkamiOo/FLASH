@@ -13,6 +13,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 using json = nlohmann::json;
@@ -62,6 +63,7 @@ struct ObsClient::Impl {
 	std::mutex mutex; // tout ce qui suit
 	std::shared_ptr<ol::Link> link;
 	std::map<uint32_t, Stream *> streams;
+	std::set<uint32_t> closed; // fermées par OBS (scène supprimée, autre collection) : redemandées quand la liste change
 	uint32_t next_id = 1;
 	json catalog = disconnected();
 	OnCatalog on_catalog;
@@ -122,6 +124,7 @@ void ObsClient::Impl::detach(uint32_t id)
 	{
 		std::lock_guard lock(mutex);
 		streams.erase(id);
+		closed.erase(id);
 	}
 	send(ol::pack(ol::Close, json({{"id", id}}).dump()));
 }
@@ -150,6 +153,7 @@ void ObsClient::Impl::run()
 		{
 			std::lock_guard lock(mutex);
 			link = l;
+			closed.clear();
 			for (auto &[id, s] : streams)
 				opens.push_back(s->open_request(id));
 			want_previews = previews;
@@ -196,6 +200,17 @@ void ObsClient::Impl::handle(const ol::Message &m)
 			return;
 		c["connecte"] = true;
 		publish(c);
+		// Liste changée : la scène ou la source d'une entrée fermée est peut-être revenue
+		std::vector<std::vector<uint8_t>> opens;
+		{
+			std::lock_guard lock(mutex);
+			for (uint32_t id : closed)
+				if (auto it = streams.find(id); it != streams.end())
+					opens.push_back(it->second->open_request(id));
+			closed.clear();
+		}
+		for (const auto &o : opens)
+			send(o);
 		break;
 	}
 	case ol::Opened:
@@ -204,13 +219,17 @@ void ObsClient::Impl::handle(const ol::Message &m)
 		if (!j.is_object())
 			return;
 		std::lock_guard lock(mutex);
-		auto it = streams.find(j.value("id", 0u));
+		const uint32_t id = j.value("id", 0u);
+		auto it = streams.find(id);
 		if (it == streams.end())
 			return;
-		if (m.type == ol::Opened)
+		if (m.type == ol::Opened) {
+			closed.erase(id);
 			it->second->on_opened(j);
-		else
+		} else {
+			closed.insert(id);
 			it->second->on_closed();
+		}
 		break;
 	}
 	case ol::Frame: {

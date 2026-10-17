@@ -70,7 +70,11 @@ private:
 	void open_audio(const json &o);
 	void close_stream(uint32_t id);
 	void close_all();
+	void drop(uint32_t id);
 	std::string catalog();
+
+	static void source_removed(void *param, calldata_t *cd);
+	void on_source_removed(obs_source_t *source);
 
 	static void rendered(void *param);
 	void on_rendered();
@@ -116,6 +120,7 @@ void Provider::start()
 	stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	stopping_ = false;
 	obs_add_main_rendered_callback(rendered, this);
+	signal_handler_connect(obs_get_signal_handler(), "source_remove", source_removed, this);
 	serve_thread_ = std::thread(&Provider::serve, this);
 	writer_thread_ = std::thread(&Provider::writer, this);
 }
@@ -130,6 +135,7 @@ void Provider::stop()
 	serve_thread_.join();
 	writer_thread_.join();
 	obs_remove_main_rendered_callback(rendered, this);
+	signal_handler_disconnect(obs_get_signal_handler(), "source_remove", source_removed, this);
 	close_all();
 	obs_enter_graphics();
 	gs_texture_destroy(preview_tex_);
@@ -352,8 +358,10 @@ void Provider::open_video(const json &o)
 	s->width = std::clamp(o.value("largeur", 1920u), 16u, 4096u) & ~1u;
 	s->height = std::clamp(o.value("hauteur", 1080u), 16u, 4096u) & ~1u;
 	if (!s->program) {
+		// Une source retirée reste trouvable par son nom tant que quelqu'un la tient
 		s->source = obs_get_source_by_name(o.value("nom", "").c_str());
-		if (!s->source) {
+		if (!s->source || obs_source_removed(s->source)) {
+			obs_source_release(s->source);
 			send(ol::pack(ol::Closed, json({{"id", s->id}}).dump()));
 			return;
 		}
@@ -390,13 +398,21 @@ void Provider::open_video(const json &o)
 	}
 
 	const uint32_t id = s->id;
+	obs_source_t *source = s->source;
 	const json reply = {{"id", id}, {"largeur", s->width}, {"hauteur", s->height}, {"poignees", handles}};
 	FLOG_I("Envoi depuis OBS : « %s » en %ux%u", s->program ? "programme" : o.value("nom", "").c_str(), s->width, s->height);
+	bool removed;
 	{
+		// Retirée par OBS pendant l'ouverture : le signal est passé avant qu'elle soit rangée.
+		// Opened part avant tout Closed venu du signal.
 		std::lock_guard lock(streams_mutex_);
+		removed = source && obs_source_removed(source);
 		video_[id] = std::move(s);
+		if (!removed)
+			send(ol::pack(ol::Opened, reply.dump()));
 	}
-	send(ol::pack(ol::Opened, reply.dump()));
+	if (removed)
+		drop(id);
 }
 
 void Provider::open_audio(const json &o)
@@ -418,15 +434,22 @@ void Provider::open_audio(const json &o)
 		return;
 	}
 	a->source = obs_get_source_by_name(name.c_str());
-	if (!a->source) {
+	if (!a->source || obs_source_removed(a->source)) {
+		obs_source_release(a->source);
 		send(ol::pack(ol::Closed, json({{"id", a->id}}).dump()));
 		return;
 	}
+	// Rappel posé avant de ranger la piste : une fois rangée, le signal de retrait peut la libérer
+	const uint32_t id = ap->id;
+	obs_source_add_audio_capture_callback(ap->source, source_audio, ap);
+	bool removed;
 	{
 		std::lock_guard lock(streams_mutex_);
-		audio_[ap->id] = std::move(a);
+		removed = obs_source_removed(ap->source);
+		audio_[id] = std::move(a);
 	}
-	obs_source_add_audio_capture_callback(ap->source, source_audio, ap);
+	if (removed)
+		drop(id);
 }
 
 void Provider::close_stream(uint32_t id)
@@ -478,6 +501,45 @@ void Provider::close_all()
 	}
 	for (uint32_t id : ids)
 		close_stream(id);
+}
+
+// Fermée côté OBS : l'appli est prévenue. La liste repart au prochain tour même identique (même
+// collection rechargée) : l'appli redemande alors ce qu'OBS lui a fermé.
+void Provider::drop(uint32_t id)
+{
+	close_stream(id);
+	send(ol::pack(ol::Closed, json({{"id", id}}).dump()));
+	std::lock_guard lock(out_mutex_);
+	last_catalog_.clear();
+}
+
+// OBS retire une scène ou une source (suppression, changement de collection, fermeture) : la vue
+// et la référence sont rendues tout de suite, sinon la source survit au vidage des scènes et
+// OBS ne peut plus se fermer
+void Provider::source_removed(void *param, calldata_t *cd)
+{
+	((Provider *)param)->on_source_removed((obs_source_t *)calldata_ptr(cd, "source"));
+}
+
+void Provider::on_source_removed(obs_source_t *source)
+{
+	if (!source)
+		return;
+	std::vector<uint32_t> ids;
+	{
+		std::lock_guard lock(streams_mutex_);
+		for (auto &[id, v] : video_)
+			if (v->source == source)
+				ids.push_back(id);
+		for (auto &[id, a] : audio_)
+			if (a->source == source)
+				ids.push_back(id);
+	}
+	if (ids.empty())
+		return;
+	FLOG_I("Envoi depuis OBS : « %s » retirée par OBS", obs_source_get_name(source));
+	for (uint32_t id : ids)
+		drop(id);
 }
 
 // ---------- Rendu (fil graphique d'OBS) ----------
@@ -617,8 +679,10 @@ void Provider::preview_step(const struct obs_video_info &ovi)
 	const std::string name = preview_names_[preview_turn_++ % preview_names_.size()];
 	VideoStream s;
 	s.program = name.empty();
-	if (!s.program && !(s.source = obs_get_source_by_name(name.c_str())))
+	if (!s.program && (!(s.source = obs_get_source_by_name(name.c_str())) || obs_source_removed(s.source))) {
+		obs_source_release(s.source);
 		return;
+	}
 	draw(preview_tex_, kPreviewW, kPreviewH, s, ovi);
 	gs_stage_texture(preview_stage_, preview_tex_);
 	obs_source_release(s.source);

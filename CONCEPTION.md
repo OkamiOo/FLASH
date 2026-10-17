@@ -796,10 +796,13 @@ Aucune interface chargée. L'objectif de 80 Mo ne tient pas compte de la part du
 ### Trouvé pendant l'essai
 
 - OBS-A ne s'est pas fermé seul (arrêté au bout de 30 s) alors que l'appli envoyait sa scène :
-  le plugin garde la scène (et la source navigateur qu'elle contient) jusqu'au déchargement des
-  modules, après qu'OBS a vidé ses scènes. Fermé une fois l'appli partie, OBS-A s'arrête
-  normalement. À corriger : relâcher la vue dès qu'OBS retire la source (signal `source_remove`
-  de libobs) ou à la fermeture d'OBS.
+  le plugin gardait la scène (et la source navigateur qu'elle contient) jusqu'au déchargement des
+  modules, après qu'OBS a vidé ses scènes. Fermé une fois l'appli partie, OBS-A s'arrêtait
+  normalement. Corrigé : le plugin rend la vue et la source au signal `source_remove` de libobs
+  (fermeture, changement de collection, suppression) et prévient l'appli, qui redemande la scène
+  quand la liste change. Vérifié sur un OBS de test qui envoie une scène à source navigateur et
+  son son : fermé en 0,4 s (bloqué avec le plugin d'avant), aucune source orpheline, scène
+  reprise 2,0 s après la relance d'OBS et 0,8 s après un aller-retour de collection.
 
 ### Correction : redescente rapide après un changement de pistes
 

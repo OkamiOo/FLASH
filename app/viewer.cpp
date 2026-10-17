@@ -310,6 +310,7 @@ struct Viewer::Impl {
 	std::atomic<bool> have_phase_{false};
 	std::atomic<uint64_t> shown_{0}, dropped_{0};
 	std::atomic<uint64_t> latency_sum_{0}, latency_n_{0};
+	std::atomic<uint64_t> display_sum_{0}, display_count_{0}; // de l'arrivée à l'affichage, pour l'émetteur
 	uint64_t stats_at_ = 0;
 };
 
@@ -495,6 +496,9 @@ void Viewer::Impl::on_packet(const MediaPacket &pkt)
 		last_report_ = pkt.arrival_ns;
 		measure::clock(clock_.offset_ns(), phase_.load(), max_video_lag_, max_audio_lag_);
 		max_video_lag_ = max_audio_lag_ = INT64_MIN;
+		const uint64_t n = display_count_.exchange(0), sum = display_sum_.exchange(0);
+		if (n)
+			receiver_.report_latency(sum / n);
 	}
 }
 
@@ -1242,6 +1246,10 @@ void Viewer::Impl::frame_shown(const Ready &f, uint64_t shown_ns)
 	if (shown_ns > f.pts) {
 		latency_sum_ += shown_ns - f.pts;
 		latency_n_++;
+	}
+	if (f.arrival && shown_ns > f.arrival) {
+		display_sum_ += shown_ns - f.arrival;
+		display_count_++;
 	}
 	measure::shown(f.target, shown_ns);
 }

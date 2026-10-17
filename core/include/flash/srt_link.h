@@ -41,6 +41,7 @@ struct SrtLinkStats {
 	int64_t lost = 0;
 	int64_t dropped = 0;
 	int64_t retransmitted = 0;
+	int latency_ms = 0; // latence de réception négociée avec l'émetteur
 };
 
 class SrtServer {
@@ -98,6 +99,7 @@ public:
 	bool send(const uint8_t *data, size_t size);
 	bool connected() const { return connected_; }
 	SrtLinkStats stats();
+	int latency_ms() const;
 
 private:
 	void run();

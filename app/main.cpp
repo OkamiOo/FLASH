@@ -54,6 +54,10 @@ Sources (autant que voulu) :
   --appli nom.exe        son d'une application
   --systeme              son de tout le système, sauf FLASH
   --micro [nom]          micro (par défaut celui de Windows)
+  --obs-scene nom        scène d'OBS (OBS ouvert sur ce PC, avec le plugin FLASH)
+  --obs-source nom       source d'OBS
+  --obs-programme        programme d'OBS (ce qui part en direct)
+  --obs-son [nom]        son d'une source d'OBS (par défaut le mix d'OBS)
 
 Réglages :
   --reseau               accessible depuis le réseau (sinon ce PC seulement)
@@ -116,6 +120,14 @@ bool parse_args(int argc, char **argv, Args &a)
 			a.sources.push_back({"appli", next()});
 		else if (arg == "--micro")
 			a.sources.push_back({"micro", optional()});
+		else if (arg == "--obs-scene")
+			a.sources.push_back({"obs-scene", next()});
+		else if (arg == "--obs-source")
+			a.sources.push_back({"obs-source", next()});
+		else if (arg == "--obs-programme")
+			a.sources.push_back({"obs-programme", ""});
+		else if (arg == "--obs-son")
+			a.sources.push_back({"obs-son", optional()});
 		else if (arg == "--reseau")
 			a.settings.address = "0.0.0.0";
 		else if (arg == "--libre")

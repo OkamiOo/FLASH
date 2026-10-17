@@ -2,301 +2,629 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FLASH</title>
 <style>
 :root {
-  --fond: #f4f5f7; --carte: #ffffff; --texte: #1d2129; --discret: #6b7280; --bord: #e2e5ea;
-  --accent: #e8590c; --accent-texte: #ffffff; --ok: #2f9e44; --alerte: #c92a2a;
+  --fond: #f3f2ee; --fond-2: #f8f7f4; --carte: #ffffff; --bord: rgba(0,0,0,.10); --bord-fort: rgba(0,0,0,.18);
+  --texte: #1f1e1d; --texte-2: #5f5e5a; --discret: #888780; --ok-fond: #EAF3DE; --ok: #3B6D11;
+  --alerte: #b42318; --acc: #EF9F27; --acc-texte: #854F0B; --acc-sur: #412402; --rayon: 8px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --fond: #16181c; --carte: #1f2228; --texte: #e8eaed; --discret: #9aa0a8; --bord: #2e333b;
-    --accent: #ff7a2f; --accent-texte: #16181c; --ok: #51cf66; --alerte: #ff6b6b;
+    --fond: #161615; --fond-2: #1f1f1e; --carte: #262625; --bord: rgba(255,255,255,.10); --bord-fort: rgba(255,255,255,.18);
+    --texte: #f1efe8; --texte-2: #b4b2a9; --discret: #888780; --ok-fond: #27500A; --ok: #C0DD97;
+    --alerte: #ff8a7a; --acc-texte: #FAC775;
   }
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
-  margin: 0; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; background: var(--fond); color: var(--texte);
-  user-select: none;
+  margin: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--carte); color: var(--texte);
+  font: 14px/1.45 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; user-select: none;
 }
-header {
-  display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--bord);
-  background: var(--carte);
-}
-header h1 { margin: 0; font-size: 20px; letter-spacing: 2px; }
-header .pc { color: var(--discret); }
-.etat { margin-left: auto; padding: 4px 12px; border-radius: 999px; background: var(--fond); color: var(--discret); }
-.etat.actif { color: var(--ok); }
-main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px 24px; }
-section { background: var(--carte); border: 1px solid var(--bord); border-radius: 8px; padding: 16px; }
-section + section { margin-top: 16px; }
-h2 { margin: 0 0 12px; font-size: 15px; }
-h3 { margin: 16px 0 6px; font-size: 13px; color: var(--discret); font-weight: 600; }
-label.choix { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
-label.choix small { color: var(--discret); }
-.piste { margin-left: auto; color: var(--discret); font-variant-numeric: tabular-nums; }
-.vide { color: var(--discret); font-style: italic; }
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 button {
-  font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--bord); background: var(--carte);
-  color: var(--texte); cursor: pointer;
+  font: inherit; color: inherit; background: transparent; border: 1px solid var(--bord-fort); border-radius: var(--rayon);
+  padding: 6px 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
 }
-button.principal { background: var(--accent); border-color: var(--accent); color: var(--accent-texte); font-weight: 600; }
-button:disabled { opacity: .5; cursor: default; }
-select { font: inherit; padding: 5px; border-radius: 6px; border: 1px solid var(--bord); background: var(--carte); color: var(--texte); max-width: 100%; }
-.code {
-  font: 600 28px/1.2 Consolas, "Cascadia Mono", monospace; letter-spacing: 3px; text-align: center;
-  padding: 12px; margin: 8px 0 12px; border: 1px dashed var(--bord); border-radius: 8px; user-select: text;
+button:hover { background: var(--fond-2); }
+button:disabled { opacity: .45; cursor: default; }
+button.principal { background: var(--acc); border-color: var(--acc); color: var(--acc-sur); font-weight: 600; }
+button.icone { padding: 4px; border: 0; color: var(--texte-2); }
+button.lien { border: 0; padding: 0; color: var(--discret); text-decoration: underline; font-size: 13px; }
+input[type=text], select {
+  font: inherit; color: inherit; background: var(--carte); border: 1px solid var(--bord-fort); border-radius: var(--rayon);
+  padding: 5px 8px; min-width: 0; max-width: 100%;
 }
-.aide { color: var(--discret); font-size: 13px; margin: 0 0 8px; }
-.ligne { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--bord); }
+input[type=text] { user-select: text; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; min-width: 0; height: 18px; margin: 0; background: transparent; cursor: pointer; }
+input[type=range]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(var(--acc), var(--acc)) 0 / var(--rempli, 50%) 100% no-repeat, var(--bord-fort);
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%;
+  background: var(--acc); border: 2px solid var(--carte); box-shadow: 0 0 0 1px var(--acc);
+}
+input[type=range]:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: 4px; }
+
+/* En-tête */
+.barre { flex: none; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--bord); min-width: 0; }
+.barre .eclair { width: 20px; height: 20px; color: var(--acc); }
+.barre .logo { font-weight: 600; letter-spacing: 2px; }
+.barre .pc { font-size: 12px; color: var(--discret); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.barre .vide { flex: 1; }
+.barre .stats { font-size: 12px; color: var(--texte-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pastille {
+  font-size: 12px; padding: 3px 10px; border-radius: 99px; background: var(--fond-2); color: var(--texte-2);
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.pastille svg.i { width: 14px; height: 14px; }
+.pastille.ok { background: var(--ok-fond); color: var(--ok); }
+
+/* Corps : navigation | zone (contenu + colonne) */
+.corps { flex: 1; min-height: 0; display: grid; grid-template-columns: 168px minmax(0, 1fr); }
+nav { border-right: 1px solid var(--bord); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+nav a {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--rayon); color: var(--texte-2);
+  cursor: pointer; white-space: nowrap;
+}
+nav a:hover { background: var(--fond-2); }
+nav a.on { background: var(--fond); color: var(--texte); }
+nav a.on svg.i { color: var(--acc); }
+.zone {
+  min-width: 0; overflow-y: auto; overflow-x: hidden; display: grid;
+  grid-template-columns: minmax(0, 1fr) 272px; align-items: start;
+  /* Séparateur de la colonne latérale, sur toute la hauteur qui défile */
+  background: linear-gradient(var(--bord), var(--bord)) right 272px top / 1px 100% no-repeat local;
+}
+main { padding: 16px; min-width: 0; }
+aside { padding: 16px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+@media (max-width: 960px) {
+  .zone { grid-template-columns: minmax(0, 1fr); background: none; }
+  aside { border-top: 1px solid var(--bord); display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-items: start; }
+}
+@media (max-width: 760px) {
+  .corps { grid-template-columns: 56px minmax(0, 1fr); }
+  nav { padding: 10px 6px; }
+  nav a { justify-content: center; padding: 9px 0; }
+  nav a span { display: none; }
+}
+@media (max-width: 520px) { .barre .stats { display: none; } }
+
+.page { display: none; }
+.page.on { display: block; }
+.titre { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 18px 0 8px; font-size: 12px; color: var(--discret); }
+.titre:first-child { margin-top: 0; }
+.aide { color: var(--discret); font-size: 13px; margin: 0 0 10px; }
+.carte { border: 1px solid var(--bord); border-radius: 10px; padding: 12px; background: var(--carte); min-width: 0; }
+.carte + .carte { margin-top: 12px; }
+aside .carte + .carte { margin-top: 0; }
+.etiquette { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: var(--texte-2); margin-bottom: 6px; }
+.etiquette .valeur { color: var(--texte); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.code { font: 600 22px/1.2 Consolas, "Cascadia Mono", monospace; letter-spacing: 3px; text-align: center; padding: 8px 0 10px; user-select: text; }
+.vide-liste { color: var(--discret); font-style: italic; font-size: 13px; padding: 4px 0; }
+.erreur { color: var(--alerte); font-size: 13px; margin-top: 6px; }
+
+/* Pastilles de filtre */
+.filtres { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.filtre { font-size: 12px; padding: 4px 11px; border-radius: 99px; border: 1px solid var(--bord-fort); cursor: pointer; color: var(--texte-2); }
+.filtre.on { background: var(--acc); border-color: var(--acc); color: var(--acc-sur); }
+
+/* Tuiles */
+.tuiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.tuile { border: 1px solid var(--bord); border-radius: 10px; overflow: hidden; background: var(--fond-2); min-width: 0; position: relative; }
+.tuile.sel { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
+.tuile .apercu { aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; background: var(--fond); color: var(--discret); overflow: hidden; }
+.tuile .apercu img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tuile .apercu svg.i { width: 24px; height: 24px; }
+.tuile .meta { display: flex; align-items: center; gap: 8px; padding: 8px; }
+.tuile .meta > div { flex: 1; min-width: 0; }
+.tuile .nom { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tuile .type { font-size: 11px; color: var(--discret); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tuile .retirer { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.45); color: #fff; border-radius: 6px; padding: 2px; display: none; }
+.tuile:hover .retirer { display: inline-flex; }
+.tuile.ajout { border-style: dashed; background: transparent; cursor: pointer; }
+.tuile.ajout .apercu { background: transparent; }
+.tuile.info .apercu { background: transparent; }
+
+/* Interrupteur */
+.inter { position: relative; width: 34px; height: 20px; border-radius: 99px; background: var(--bord-fort); border: 0; padding: 0; flex: none; cursor: pointer; }
+.inter:hover { background: var(--bord-fort); }
+.inter::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--carte); transition: left .15s; }
+.inter.on { background: var(--acc); }
+.inter.on::after { left: 17px; }
+
+/* Lignes de son */
+.son { display: grid; grid-template-columns: 26px minmax(0, 1.3fr) minmax(70px, 1fr) 34px; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--bord); }
+.son:last-child { border-bottom: 0; }
+.son .ic { width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; color: var(--texte-2); }
+.son .ic img { width: 22px; height: 22px; }
+.son .nom { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.son .nom small { color: var(--discret); margin-left: 6px; }
+.vumetre { height: 4px; border-radius: 2px; background: var(--fond); overflow: hidden; margin-top: 5px; }
+.vumetre i { display: block; height: 100%; width: 0; background: var(--acc); transition: width .08s linear; }
+
+/* Choix segmentés */
+.seg { display: flex; border: 1px solid var(--bord-fort); border-radius: var(--rayon); overflow: hidden; }
+.seg button { flex: 1; border: 0; border-radius: 0; padding: 5px 4px; font-size: 12px; color: var(--texte-2); min-width: 0; }
+.seg button + button { border-left: 1px solid var(--bord); }
+.seg button.on { background: var(--fond); color: var(--texte); font-weight: 600; }
+
+/* Listes (Regarder, Appareils) */
+.ligne { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--bord); min-width: 0; }
 .ligne:first-child { border-top: 0; }
-.ligne span { flex: 1; }
-.barre { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
-.reglage { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
-input[type=text] {
-  font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--bord); background: var(--carte);
-  color: var(--texte); min-width: 0; user-select: text;
-}
-input.code-saisi { width: 120px; font-family: Consolas, "Cascadia Mono", monospace; letter-spacing: 1px; text-transform: uppercase; }
+.ligne > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .emetteur { padding: 10px 0; border-top: 1px solid var(--bord); }
 .emetteur:first-child { border-top: 0; }
-.emetteur .titre { display: flex; align-items: baseline; gap: 8px; }
-.emetteur .titre strong { font-weight: 600; }
-.emetteur .titre small { color: var(--discret); }
-.emetteur .commandes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
-.emetteur .commandes label { color: var(--discret); font-size: 13px; }
-.emetteur .vue { margin-top: 6px; color: var(--ok); font-size: 13px; font-variant-numeric: tabular-nums; }
-.emetteur .erreur, .erreur { color: var(--alerte); font-size: 13px; margin-top: 6px; }
-.lien { border: 0; background: none; padding: 0; color: var(--discret); text-decoration: underline; font-size: 13px; }
+.emetteur .tete { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.emetteur .tete strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.emetteur .tete small { color: var(--discret); white-space: nowrap; }
+.commandes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.commandes label { color: var(--discret); font-size: 13px; }
+.commandes select { flex: 1 1 140px; }
+.vue { margin-top: 6px; color: var(--ok); font-size: 13px; font-variant-numeric: tabular-nums; }
+input.code-saisi { width: 120px; font-family: Consolas, "Cascadia Mono", monospace; letter-spacing: 1px; text-transform: uppercase; }
 details.manuel { margin-top: 12px; color: var(--discret); }
 details.manuel summary { cursor: pointer; font-size: 13px; }
-details.manuel .reglage { justify-content: flex-start; }
+.rangee { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.reglage { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--bord); flex-wrap: wrap; }
+.reglage:first-child { border-top: 0; }
+.reglage > div:first-child { min-width: 0; flex: 1 1 200px; }
+.reglage small { display: block; color: var(--discret); font-size: 12px; }
+.reglage .seg { flex: 0 1 300px; }
+
+/* Ajout d'une fenêtre */
+dialog { border: 1px solid var(--bord-fort); border-radius: 12px; background: var(--carte); color: var(--texte); padding: 0; width: min(520px, calc(100vw - 32px)); max-height: min(560px, calc(100vh - 32px)); }
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog .tete { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--bord); font-weight: 600; }
+dialog .liste { overflow-y: auto; max-height: calc(min(560px, 100vh - 32px) - 50px); padding: 6px; }
+dialog .choix { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; justify-content: flex-start; text-align: left; padding: 8px; }
+dialog .choix img, dialog .choix svg.i { width: 22px; height: 22px; flex: none; }
+dialog .choix span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog .choix small { color: var(--discret); }
 </style>
 </head>
 <body>
-<header>
-  <h1>FLASH</h1>
+<header class="barre">
+  <svg class="i eclair" data-icone="eclair"></svg>
+  <span class="logo">FLASH</span>
   <span class="pc" id="pc"></span>
-  <span class="etat" id="etat">Personne ne reçoit</span>
+  <span class="vide"></span>
+  <span class="stats" id="stats"></span>
+  <span class="pastille" id="etat"><svg class="i" data-icone="diffusion"></svg><span>Personne ne reçoit</span></span>
 </header>
-<main>
-  <div>
-    <section>
-      <h2>Ce que j'envoie</h2>
-      <h3>Écrans</h3>
-      <div id="ecrans"></div>
-      <h3>Fenêtres</h3>
-      <div id="fenetres"></div>
-      <div class="reglage">
-        <select id="nouvelle-fenetre"></select>
-        <button id="ajouter-fenetre">Ajouter</button>
-      </div>
-      <h3>Son</h3>
-      <div id="sons"></div>
-      <div class="barre">
-        <button id="annuler" disabled>Annuler</button>
-        <button id="appliquer" class="principal" disabled>Appliquer</button>
-      </div>
-    </section>
-    <section>
-      <h2>Regarder</h2>
-      <p class="aide">Les PC du réseau où FLASH est ouvert. Ce PC y figure aussi, pour voir ce qu'il envoie.</p>
-      <div id="emetteurs"><div class="vide">Recherche…</div></div>
-      <details class="manuel">
-        <summary>Un PC n'apparaît pas ?</summary>
-        <p class="aide">L'ajouter par son adresse IP, avec le code affiché par FLASH sur ce PC-là.</p>
-        <div class="reglage">
-          <input type="text" id="adresse-manuelle" placeholder="192.168.1.20">
-          <input type="text" id="code-manuel" class="code-saisi" placeholder="Code" maxlength="9">
-          <button id="appairer-manuel">Appairer</button>
+<div class="corps">
+  <nav id="nav">
+    <a data-page="envoyer" class="on" title="Envoyer"><svg class="i" data-icone="envoyer"></svg><span>Envoyer</span></a>
+    <a data-page="regarder" title="Regarder"><svg class="i" data-icone="oeil"></svg><span>Regarder</span></a>
+    <a data-page="appareils" title="Appareils"><svg class="i" data-icone="appareils"></svg><span>Appareils</span></a>
+    <a data-page="reglages" title="Réglages"><svg class="i" data-icone="reglages"></svg><span>Réglages</span></a>
+  </nav>
+  <div class="zone">
+    <main>
+      <section class="page on" id="page-envoyer">
+        <div class="filtres" id="filtres">
+          <span class="filtre on" data-f="tout">Tout</span>
+          <span class="filtre" data-f="scene">Scènes OBS</span>
+          <span class="filtre" data-f="source">Sources OBS</span>
+          <span class="filtre" data-f="ecran">Écrans</span>
+          <span class="filtre" data-f="fenetre">Fenêtres</span>
         </div>
-        <div class="erreur" id="erreur-manuelle"></div>
-      </details>
-      <div class="barre"><button id="chercher">Chercher à nouveau</button></div>
-    </section>
+        <div class="tuiles" id="tuiles"></div>
+        <div class="titre"><span>Son</span><span>volume envoyé</span></div>
+        <div id="sons"></div>
+      </section>
+
+      <section class="page" id="page-regarder">
+        <p class="aide">Les PC du réseau où FLASH est ouvert. Ce PC y figure aussi, pour voir ce qu'il envoie.</p>
+        <div class="carte"><div id="emetteurs"><div class="vide-liste">Recherche…</div></div></div>
+        <details class="manuel">
+          <summary>Un PC n'apparaît pas ?</summary>
+          <p class="aide">L'ajouter par son adresse IP, avec le code affiché par FLASH sur ce PC-là.</p>
+          <div class="rangee">
+            <input type="text" id="adresse-manuelle" placeholder="192.168.1.20">
+            <input type="text" id="code-manuel" class="code-saisi" placeholder="Code" maxlength="9">
+            <button id="appairer-manuel">Appairer</button>
+          </div>
+          <div class="erreur" id="erreur-manuelle"></div>
+        </details>
+        <div class="rangee"><button id="chercher"><svg class="i" data-icone="actualiser"></svg>Chercher à nouveau</button></div>
+      </section>
+
+      <section class="page" id="page-appareils">
+        <div class="titre"><span>PC autorisés à recevoir ce que j'envoie</span></div>
+        <div class="carte"><div id="recepteurs"></div></div>
+        <div class="titre"><span>PC que je peux regarder</span></div>
+        <div class="carte"><div id="appaires"></div></div>
+      </section>
+
+      <section class="page" id="page-reglages">
+        <div class="carte">
+          <div class="reglage">
+            <div>Lancer FLASH avec Windows<small>Il démarre caché, près de l'horloge.</small></div>
+            <button class="inter" id="demarrage" role="switch"></button>
+          </div>
+          <div class="reglage">
+            <div>Accès<small>« Ce PC seulement » pour essayer sans le réseau.</small></div>
+            <div class="seg" id="acces"><button data-v="0.0.0.0">Réseau local</button><button data-v="127.0.0.1">Ce PC seulement</button></div>
+          </div>
+          <div class="reglage">
+            <div>Taille maximale envoyée<small>Les plus grandes images sont réduites.</small></div>
+            <div class="seg" id="taille"><button data-v="1280x720">720p</button><button data-v="1920x1080">1080p</button><button data-v="2560x1440">1440p</button><button data-v="3840x2160">4K</button></div>
+          </div>
+          <div class="reglage">
+            <div>Encodeur<small>Automatique : la carte NVIDIA si elle est là, sinon Windows.</small></div>
+            <div class="seg" id="encodeur"><button data-v="auto">Automatique</button><button data-v="nvenc">NVIDIA</button><button data-v="mf">Windows</button></div>
+          </div>
+          <div class="reglage">
+            <div>Curseur de la souris<small>Visible dans les écrans et fenêtres envoyés.</small></div>
+            <button class="inter" id="curseur" role="switch"></button>
+          </div>
+        </div>
+        <p class="aide" id="version" style="margin-top:12px"></p>
+      </section>
+    </main>
+
+    <aside>
+      <div class="carte">
+        <div class="etiquette"><span>Code d'invitation</span><button class="icone" id="nouveau-code" title="Nouveau code"><svg class="i" data-icone="actualiser"></svg></button></div>
+        <div class="code" id="code">····-····</div>
+        <button id="copier" style="width:100%"><svg class="i" data-icone="copier"></svg><span>Copier</span></button>
+      </div>
+      <div class="carte">
+        <div class="etiquette"><span>Qualité</span><span class="valeur" id="qualite-v"></span></div>
+        <input type="range" id="qualite" min="6" max="80" step="1" value="25">
+        <div class="etiquette" style="margin-top:14px"><span>Réseau</span><span class="valeur" id="reseau-v"></span></div>
+        <input type="range" id="reseau" min="0" max="2" step="1" value="0">
+        <div class="etiquette" style="margin-top:14px"><span>Format</span></div>
+        <div class="seg" id="format"><button data-v="h264">H.264</button><button data-v="hevc">HEVC</button><button data-v="av1" disabled title="AV1 : pas encore pris en charge par FLASH">AV1</button></div>
+      </div>
+    </aside>
   </div>
-  <div>
-    <section>
-      <h2>Code d'invitation</h2>
-      <p class="aide">À saisir une fois dans la source FLASH d'OBS, sur le PC qui reçoit.</p>
-      <div class="code" id="code">····-····</div>
-      <div class="barre"><button id="nouveau-code">Nouveau code</button></div>
-    </section>
-    <section>
-      <h2>PC autorisés à recevoir</h2>
-      <div id="recepteurs"></div>
-    </section>
-    <section>
-      <h2>Réglages</h2>
-      <div class="reglage"><span>Qualité</span>
-        <select id="qualite">
-          <option value="12000">Économie (12 Mb/s)</option>
-          <option value="25000">Haute (25 Mb/s)</option>
-          <option value="50000">Très haute (50 Mb/s)</option>
-        </select></div>
-      <div class="reglage"><span>Format</span>
-        <select id="format">
-          <option value="h264">H.264 (le plus compatible)</option>
-          <option value="hevc">HEVC (meilleure image)</option>
-        </select></div>
-      <div class="reglage"><span>Réseau</span>
-        <select id="reseau">
-          <option value="0.0.0.0">Réseau local</option>
-          <option value="127.0.0.1">Ce PC seulement</option>
-        </select></div>
-      <div class="reglage"><span>Connexion</span>
-        <select id="latence">
-          <option value="20">Câble (20 ms)</option>
-          <option value="60">Wi-Fi (60 ms)</option>
-          <option value="200">Internet (200 ms)</option>
-        </select></div>
-      <label class="choix"><input type="checkbox" id="demarrage"> Lancer FLASH avec Windows</label>
-    </section>
-  </div>
-</main>
+</div>
+
+<dialog id="ajout">
+  <div class="tete"><span>Ajouter une fenêtre</span><button class="icone" id="fermer-ajout" title="Fermer"><svg class="i" data-icone="fermer"></svg></button></div>
+  <div class="liste" id="liste-fenetres"></div>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
 const envoyer = (action, donnees = {}) => window.chrome.webview.postMessage({ action, ...donnees });
 const nombre = (x, decimales = 1) =>
   x.toLocaleString("fr-FR", { minimumFractionDigits: decimales, maximumFractionDigits: decimales });
+const pluriel = (n, mot) => n + " " + mot + (n > 1 ? "s" : "");
 
-let listes = { ecrans: [], fenetres: [], applis: [], micros: [] };
-let choisies = [];      // sources telles qu'elles tournent
-let brouillon = [];     // sources cochées, pas encore appliquées
+// ---------- Icônes ----------
+const ICONES = {
+  eclair: "M13 2 4 14h8l-1 8 9-12h-8z",
+  envoyer: "M12 15V4M7 9l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4",
+  oeil: "M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12zM12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z",
+  appareils: "M3 5h13v9H3zM7 18h5M9.5 14v4M18 9h3v11h-3z",
+  reglages: "M4 6h9M17 6h3M15 4v4M4 12h3M11 12h9M9 10v4M4 18h11M19 18h1M17 16v4",
+  scene: "M4 4h16v16H4zM4 10h16M10 10v10",
+  source: "M3 7h12v10H3zM15 10.5l6-3.5v10l-6-3.5",
+  ecran: "M3 4h18v12H3zM8 20h8M12 16v4",
+  fenetre: "M3 5h18v14H3zM3 9h18M6 7h.01M9 7h.01",
+  plus: "M12 5v14M5 12h14",
+  micro: "M9 5a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0zM5 11a7 7 0 0 0 14 0M12 18v3M8 21h8",
+  hautparleur: "M4 9h4l5-4v14l-5-4H4zM17 9a4.5 4.5 0 0 1 0 6M19.5 6.5a8 8 0 0 1 0 11",
+  appli: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+  actualiser: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
+  copier: "M8 8h12v12H8zM16 8V4H4v12h4",
+  diffusion: "M12 12h.01M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8",
+  fermer: "M6 6l12 12M18 6 6 18",
+  info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5M12 8h.01"
+};
+function icone(nom) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24");
+  s.setAttribute("class", "i");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", ICONES[nom] || ICONES.appli);
+  s.append(p);
+  return s;
+}
+function iconesStatiques() {
+  for (const s of document.querySelectorAll("svg[data-icone]")) {
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", ICONES[s.dataset.icone]);
+    s.setAttribute("viewBox", "0 0 24 24");
+    s.replaceChildren(p);
+  }
+}
+iconesStatiques();
 
+function el(tag, props = {}, ...enfants) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...enfants.filter(x => x !== null && x !== undefined));
+  return e;
+}
+// Partie remplie d'un curseur, en pourcentage
+function remplissage(c) {
+  c.style.setProperty("--rempli", ((c.value - c.min) / (c.max - c.min) * 100) + "%");
+}
+document.addEventListener("input", ev => { if (ev.target.type === "range") remplissage(ev.target); });
+
+function inter(actif, quand) {
+  const b = el("button", { className: "inter" + (actif ? " on" : "") });
+  b.setAttribute("role", "switch");
+  b.setAttribute("aria-checked", actif ? "true" : "false");
+  b.onclick = ev => {
+    ev.stopPropagation();
+    const on = !b.classList.contains("on");
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+    quand(on);
+  };
+  return b;
+}
+function segment(id, valeur, quand) {
+  for (const b of $(id).querySelectorAll("button")) {
+    b.classList.toggle("on", b.dataset.v === valeur);
+    b.onclick = () => {
+      if (b.disabled) return;
+      for (const x of $(id).querySelectorAll("button")) x.classList.toggle("on", x === b);
+      quand(b.dataset.v);
+    };
+  }
+}
+
+// ---------- Navigation ----------
+let page = "envoyer";
+function allerA(nom) {
+  page = nom;
+  for (const a of $("nav").querySelectorAll("a")) a.classList.toggle("on", a.dataset.page === nom);
+  for (const p of document.querySelectorAll(".page")) p.classList.toggle("on", p.id === "page-" + nom);
+  envoyer("page", { nom });
+  if (nom === "regarder") envoyer("chercher");
+}
+for (const a of $("nav").querySelectorAll("a")) a.onclick = () => allerA(a.dataset.page);
+
+// ---------- Envoyer : tuiles ----------
+let L = { ecrans: [], fenetres: [], ouvertes: [], applis: [], micros: [], sources: [], volumes: {}, obs: null };
+let filtre = "tout";
 const cle = s => s.type + "|" + (s.valeur || "");
-const memes = (a, b) => a.length === b.length && a.every((s, i) => cle(s) === cle(b[i]));
-const contient = (s) => brouillon.some(b => cle(b) === cle(s));
+const actif = s => L.sources.some(x => cle(x) === cle(s));
+const apercus = {}; // dernière vignette par source
 
-function basculer(source, coche) {
-  brouillon = brouillon.filter(b => cle(b) !== cle(source));
-  if (coche) brouillon.push(source);
-  majBoutons();
+function source(type, valeur) { return { type, valeur }; }
+
+function listeTuiles() {
+  const t = [];
+  if (L.obs && L.obs.connecte) {
+    t.push({ groupe: "scene", src: source("obs-programme", ""), nom: "Programme OBS", type: "Ce qui part en direct", icone: "diffusion" });
+    for (const s of L.obs.scenes)
+      t.push({ groupe: "scene", src: source("obs-scene", s.nom), nom: s.nom, type: "Scène OBS", icone: "scene" });
+    for (const s of L.obs.sources.filter(s => s.video))
+      t.push({ groupe: "source", src: source("obs-source", s.nom), nom: s.nom, type: "Source OBS", icone: "source" });
+  }
+  for (const e of L.ecrans)
+    t.push({ groupe: "ecran", src: source("ecran", String(e.numero)), nom: "Écran " + e.numero,
+             type: e.largeur + "×" + e.hauteur + " · " + e.hz + " Hz" + (e.principal ? " · principal" : ""), icone: "ecran" });
+  for (const f of L.fenetres) {
+    const ouverte = L.ouvertes.find(o => o.exe.toLowerCase() === f.toLowerCase());
+    t.push({ groupe: "fenetre", src: source("fenetre", f), nom: ouverte ? ouverte.titre : f.replace(/\.exe$/i, ""),
+             type: ouverte ? "Fenêtre" : "Fenêtre fermée", icone: "fenetre", retirable: true });
+  }
+  return t;
 }
 
-function majBoutons() {
-  const change = !memes(brouillon, choisies);
-  $("appliquer").disabled = !change;
-  $("annuler").disabled = !change;
+function tuileInfo(texte, detail) {
+  return el("div", { className: "tuile info" },
+    el("div", { className: "apercu" }, icone("info")),
+    el("div", { className: "meta" }, el("div", {}, el("div", { className: "nom", textContent: texte }),
+      el("div", { className: "type", textContent: detail }))));
 }
 
-function caseSource(source, titre, detail, nomPiste = titre) {
-  const l = document.createElement("label");
-  l.className = "choix";
-  const c = document.createElement("input");
-  c.type = "checkbox";
-  c.checked = contient(source);
-  c.onchange = () => basculer(source, c.checked);
-  l.append(c, document.createTextNode(titre));
-  if (detail) { const d = document.createElement("small"); d.textContent = detail; l.append(d); }
-  const p = document.createElement("span");
-  p.className = "piste";
-  p.dataset.nom = nomPiste;
-  l.append(p);
+function dessinerTuiles() {
+  const zone = $("tuiles");
+  const voir = t => filtre === "tout" || t.groupe === filtre;
+  const tuiles = listeTuiles().filter(voir).map(t => {
+    const k = cle(t.src);
+    const on = actif(t.src);
+    const ap = el("div", { className: "apercu" });
+    if (apercus[k]) ap.append(el("img", { src: apercus[k], alt: "" })); else ap.append(icone(t.icone));
+    const d = el("div", { className: "tuile" + (on ? " sel" : "") },
+      ap,
+      el("div", { className: "meta" },
+        el("div", {}, el("div", { className: "nom", textContent: t.nom, title: t.nom }), el("div", { className: "type", textContent: t.type })),
+        inter(on, v => { d.classList.toggle("sel", v); basculer(t.src, v); })));
+    d.dataset.cle = k;
+    if (t.retirable) {
+      const r = el("button", { className: "icone retirer", title: "Retirer" }, icone("fermer"));
+      r.onclick = ev => { ev.stopPropagation(); envoyer("retirer_fenetre", { exe: t.src.valeur }); };
+      d.append(r);
+    }
+    return d;
+  });
+  const obsPresent = L.obs && L.obs.connecte;
+  if (!obsPresent && (filtre === "scene" || filtre === "source"))
+    tuiles.push(L.obs && L.obs.obs_ouvert
+      ? tuileInfo("OBS sans le plugin FLASH à jour", "Relancez OBS après l'installation de FLASH")
+      : tuileInfo("OBS n'est pas ouvert", "Ouvrez OBS sur ce PC pour envoyer ses scènes et sources"));
+  if (filtre === "tout" || filtre === "fenetre") {
+    const a = el("div", { className: "tuile ajout", title: "Ajouter une fenêtre" },
+      el("div", { className: "apercu" }, icone("plus")),
+      el("div", { className: "meta" }, el("div", {}, el("div", { className: "nom", textContent: "Ajouter" }),
+        el("div", { className: "type", textContent: "Une fenêtre ouverte" }))));
+    a.onclick = ouvrirAjout;
+    tuiles.push(a);
+  }
+  zone.replaceChildren(...tuiles);
+}
+
+function basculer(src, on) {
+  if (on && !actif(src)) L.sources.push({ ...src });
+  if (!on) L.sources = L.sources.filter(x => cle(x) !== cle(src));
+  envoyer("source", { type: src.type, valeur: src.valeur, actif: on });
+}
+
+for (const f of $("filtres").querySelectorAll(".filtre"))
+  f.onclick = () => {
+    filtre = f.dataset.f;
+    for (const x of $("filtres").querySelectorAll(".filtre")) x.classList.toggle("on", x === f);
+    dessinerTuiles();
+  };
+
+function ouvrirAjout() {
+  const deja = new Set(L.fenetres.map(f => f.toLowerCase()));
+  const liste = L.ouvertes.filter(o => !deja.has(o.exe.toLowerCase()));
+  $("liste-fenetres").replaceChildren(...(liste.length ? liste.map(o => {
+    const b = el("button", { className: "choix" },
+      o.icone ? el("img", { src: o.icone, alt: "" }) : icone("fenetre"),
+      el("span", {}, document.createTextNode(o.titre + " "), el("small", { textContent: o.exe })));
+    b.onclick = () => { $("ajout").close(); envoyer("ajouter_fenetre", { exe: o.exe }); };
+    return b;
+  }) : [el("div", { className: "vide-liste", textContent: "Aucune autre fenêtre ouverte" })]));
+  $("ajout").showModal();
+}
+$("fermer-ajout").onclick = () => $("ajout").close();
+
+// ---------- Envoyer : son ----------
+function lignesSon() {
+  const l = [];
+  const vus = new Set();
+  for (const a of L.applis) {
+    vus.add(a.exe.toLowerCase());
+    l.push({ src: source("appli", a.exe), nom: a.exe.replace(/\.exe$/i, ""), detail: a.joue ? "" : "silencieuse", image: a.icone });
+  }
+  for (const s of L.sources.filter(s => s.type === "appli" && !vus.has(s.valeur.toLowerCase())))
+    l.push({ src: s, nom: s.valeur.replace(/\.exe$/i, ""), detail: "pas lancée" });
+  l.push({ src: source("systeme", ""), nom: "Tout le son du PC", detail: "sauf FLASH", icone: "hautparleur" });
+  for (const m of L.micros) l.push({ src: source("micro", m), nom: m, icone: "micro" });
+  if (L.obs && L.obs.connecte) {
+    l.push({ src: source("obs-son", ""), nom: "Mix OBS", detail: "tout le son d'OBS", icone: "diffusion" });
+    for (const s of L.obs.sources.filter(s => s.audio))
+      l.push({ src: source("obs-son", s.nom), nom: s.nom, detail: "OBS", icone: "source" });
+  }
   return l;
 }
 
-function dessinerSources() {
-  const ecrans = $("ecrans");
-  ecrans.replaceChildren(...listes.ecrans.map(e =>
-    caseSource({ type: "ecran", valeur: String(e.numero) }, "Écran " + e.numero,
-               e.largeur + "×" + e.hauteur + ", " + e.hz + " Hz" + (e.principal ? ", principal" : ""))));
-
-  const fen = brouillon.filter(s => s.type === "fenetre");
-  $("fenetres").replaceChildren(...(fen.length ? fen.map(s => caseSource(s, s.valeur)) :
-    [Object.assign(document.createElement("div"), { className: "vide", textContent: "Aucune fenêtre" })]));
-  const menu = $("nouvelle-fenetre");
-  menu.replaceChildren(...listes.fenetres.map(f => {
-    const o = document.createElement("option");
-    o.value = f.exe;
-    o.textContent = f.titre + " (" + f.exe + ")";
-    return o;
+function dessinerSons() {
+  $("sons").replaceChildren(...lignesSon().map(s => {
+    const k = cle(s.src);
+    const vol = Math.round((L.volumes[k] ?? 1) * 100);
+    const curseur = el("input", { type: "range", min: 0, max: 100, step: 1, value: vol, title: "Volume envoyé : " + vol + " %" });
+    remplissage(curseur);
+    curseur.oninput = () => {
+      curseur.title = "Volume envoyé : " + curseur.value + " %";
+      L.volumes[k] = curseur.value / 100;
+      envoyer("volume", { type: s.src.type, valeur: s.src.valeur, volume: curseur.value / 100 });
+    };
+    const d = el("div", { className: "son" },
+      el("div", { className: "ic" }, s.image ? el("img", { src: s.image, alt: "" }) : icone(s.icone || "appli")),
+      el("div", {}, el("div", { className: "nom", title: s.nom }, document.createTextNode(s.nom), s.detail ? el("small", { textContent: s.detail }) : null),
+        el("div", { className: "vumetre" }, el("i"))),
+      curseur,
+      inter(actif(s.src), on => basculer(s.src, on)));
+    d.dataset.cle = k;
+    return d;
   }));
-
-  const sons = [];
-  for (const a of listes.applis)
-    sons.push(caseSource({ type: "appli", valeur: a.exe }, a.exe.replace(/\.exe$/i, ""), a.joue ? "joue du son" : ""));
-  for (const s of brouillon.filter(s => s.type === "appli" && !listes.applis.some(a => a.exe === s.valeur)))
-    sons.push(caseSource(s, s.valeur.replace(/\.exe$/i, ""), "pas lancée"));
-  sons.push(caseSource({ type: "systeme", valeur: "" }, "Tout le son du PC", "sauf FLASH", "Son du système"));
-  for (const m of listes.micros)
-    sons.push(caseSource({ type: "micro", valeur: m }, m, "", "Micro " + m));
-  $("sons").replaceChildren(...sons);
 }
 
+// ---------- Colonne : code et réglages rapides ----------
+let R = {};
+const RESEAUX = [["Câble", 20], ["Wi-Fi", 60], ["Internet", 200]];
+const niveauQualite = v => v < 15 ? "Économie" : v < 40 ? "Haute" : "Très haute";
+function majEtiquettes() {
+  const q = +$("qualite").value, n = RESEAUX[+$("reseau").value];
+  $("qualite-v").textContent = q + " Mb/s · " + niveauQualite(q);
+  $("reseau-v").textContent = n[0] + " · " + n[1] + " ms";
+}
+function envoyerReglages() {
+  envoyer("reglages", {
+    debit: +$("qualite").value * 1000, codec: R.codec, adresse: R.adresse, latence: RESEAUX[+$("reseau").value][1],
+    demarrage: R.demarrage, curseur: R.curseur, taille: R.taille, encodeur: R.encodeur
+  });
+}
+function dessinerReglages(r) {
+  R = { ...r };
+  $("qualite").value = Math.round(r.debit / 1000);
+  const i = RESEAUX.findIndex(x => x[1] >= r.latence);
+  $("reseau").value = i < 0 ? 2 : i;
+  remplissage($("qualite"));
+  remplissage($("reseau"));
+  majEtiquettes();
+  segment("format", r.codec, v => { R.codec = v; envoyerReglages(); });
+  segment("acces", r.adresse, v => { R.adresse = v; envoyerReglages(); });
+  segment("taille", r.taille, v => { R.taille = v; envoyerReglages(); });
+  segment("encodeur", r.encodeur, v => { R.encodeur = v; envoyerReglages(); });
+  for (const [id, champ] of [["demarrage", "demarrage"], ["curseur", "curseur"]]) {
+    const b = $(id);
+    b.classList.toggle("on", !!r[champ]);
+    b.onclick = () => { R[champ] = !R[champ]; b.classList.toggle("on", R[champ]); envoyerReglages(); };
+  }
+  $("version").textContent = r.version ? "FLASH " + r.version : "";
+}
+$("qualite").oninput = majEtiquettes;
+$("reseau").oninput = majEtiquettes;
+$("qualite").onchange = envoyerReglages;
+$("reseau").onchange = envoyerReglages;
+$("nouveau-code").onclick = () => envoyer("nouveau_code");
+$("copier").onclick = () => {
+  envoyer("copier", { texte: $("code").textContent });
+  const s = $("copier").querySelector("span");
+  s.textContent = "Copié";
+  setTimeout(() => { s.textContent = "Copier"; }, 1500);
+};
+
+// ---------- État ----------
 function dessinerEtat(e) {
   $("pc").textContent = e.nom;
   $("code").textContent = e.code;
   const n = e.connectes;
-  $("etat").textContent = n ? (n === 1 ? "1 PC reçoit" : n + " PC reçoivent") : "Personne ne reçoit";
-  $("etat").classList.toggle("actif", n > 0);
-  for (const p of document.querySelectorAll(".piste")) p.textContent = "";
-  for (const t of e.pistes) {
-    const p = [...document.querySelectorAll(".piste")].find(x => x.dataset.nom.toLowerCase() === t.nom.toLowerCase());
-    if (!p) continue;
-    p.textContent = !t.active ? "en pause" : t.video ? Math.round(t.ips) + " i/s, " + nombre(t.kbps / 1000) + " Mb/s"
-                                           : Math.round(t.kbps) + " kb/s";
-  }
-  const r = $("recepteurs");
-  r.replaceChildren(...(e.recepteurs.length ? e.recepteurs.map(x => {
-    const d = document.createElement("div");
-    d.className = "ligne";
-    const n = document.createElement("span");
-    n.textContent = x.nom;
-    const b = document.createElement("button");
-    b.textContent = "Retirer";
+  const p = $("etat");
+  p.querySelector("span").textContent = n ? (n === 1 ? "1 PC reçoit" : n + " PC reçoivent") : "Personne ne reçoit";
+  p.classList.toggle("ok", n > 0);
+  const morceaux = [];
+  if (e.latence_ms > 0) morceaux.push(Math.round(e.latence_ms) + " ms");
+  if (e.debit_kbps > 50) morceaux.push(nombre(e.debit_kbps / 1000) + " Mb/s");
+  $("stats").textContent = morceaux.join(" · ");
+  $("stats").title = e.latence_ms > 0 ? "Latence de la capture à l'affichage chez le PC le plus lent, et débit envoyé" : "";
+
+  $("recepteurs").replaceChildren(...(e.recepteurs.length ? e.recepteurs.map(x => {
+    const b = el("button", { textContent: "Retirer" });
     b.onclick = () => envoyer("retirer", { id: x.id });
-    d.append(n, b);
-    return d;
-  }) : [Object.assign(document.createElement("div"), { className: "vide", textContent: "Aucun pour l'instant" })]));
+    return el("div", { className: "ligne" }, el("span", { textContent: x.nom, title: x.nom }), b);
+  }) : [el("div", { className: "vide-liste", textContent: "Aucun pour l'instant. Donnez le code d'invitation au PC qui doit recevoir." })]));
+  majVues(e.vues || []);
 }
 
-function dessinerReglages(r) {
-  $("qualite").value = String(r.debit);
-  $("format").value = r.hevc ? "hevc" : "h264";
-  $("reseau").value = r.adresse;
-  $("latence").value = String(r.latence);
-  $("demarrage").checked = r.demarrage;
+// ---------- Niveaux et aperçus ----------
+function dessinerNiveaux(n) {
+  for (const d of $("sons").children) {
+    const v = n[d.dataset.cle] || 0;
+    const i = d.querySelector(".vumetre i");
+    if (i) i.style.width = Math.min(100, Math.round(Math.sqrt(v) * 100)) + "%";
+  }
+}
+function dessinerApercu(k, img) {
+  apercus[k] = img;
+  const t = [...$("tuiles").children].find(x => x.dataset.cle === k);
+  if (!t) return;
+  const ap = t.querySelector(".apercu");
+  const i = ap.querySelector("img");
+  if (i) i.src = img; else ap.replaceChildren(el("img", { src: img, alt: "" }));
 }
 
-function reglagesModifies() {
-  envoyer("reglages", {
-    debit: Number($("qualite").value), hevc: $("format").value === "hevc", adresse: $("reseau").value,
-    latence: Number($("latence").value), demarrage: $("demarrage").checked
-  });
-}
-for (const id of ["qualite", "format", "reseau", "latence", "demarrage"]) $(id).onchange = reglagesModifies;
-
-$("ajouter-fenetre").onclick = () => {
-  const v = $("nouvelle-fenetre").value;
-  if (v && !contient({ type: "fenetre", valeur: v })) { brouillon.push({ type: "fenetre", valeur: v }); dessinerSources(); majBoutons(); }
-};
 // ---------- Regarder ----------
-
 let emetteurs = [];
 let sorties = [];
-let vues = {};          // état des visionneuses ouvertes, par émetteur
-const choix = {};       // pistes choisies, gardées d'une recherche à l'autre
-const erreurs = {};     // dernier échec d'appairage, par émetteur
-
-function el(tag, props = {}, ...enfants) {
-  const e = Object.assign(document.createElement(tag), props);
-  e.append(...enfants);
-  return e;
-}
-const option = (valeur, texte) => el("option", { value: valeur, textContent: texte });
-const pluriel = (n, mot) => n + " " + mot + (n > 1 ? "s" : "");
+let vues = {};
+const choix = {};
+const erreurs = {};
 
 function choixDe(e) {
   if (!choix[e.id]) {
     const video = e.pistes.find(p => p.video);
     const sons = e.pistes.filter(p => !p.video);
-    // Aperçu de ce PC : sans le son, qu'on entend déjà
     choix[e.id] = { video: video ? video.nom : "-", son: e.moi || !sons.length ? "" : sons.length > 1 ? "*" : sons[0].nom, sortie: "" };
   }
   return choix[e.id];
 }
-
 function texteVue(v) {
   if (!v) return "Ouverture…";
   switch (v.etat) {
@@ -311,18 +639,14 @@ function texteVue(v) {
   if (v.pertes) t += ", " + pluriel(v.pertes, "paquet") + " perdu" + (v.pertes > 1 ? "s" : "");
   return t;
 }
-
+function option(valeur, texte) { return el("option", { value: valeur, textContent: texte }); }
 function commandes(e) {
   const cmd = el("div", { className: "commandes" });
   const videos = e.pistes.filter(p => p.video), sons = e.pistes.filter(p => !p.video);
   if (!(e.moi || e.appaire || e.ouvert)) {
     const code = el("input", { type: "text", className: "code-saisi", placeholder: "Code", maxLength: 9 });
     const b = el("button", { textContent: "Appairer" });
-    b.onclick = () => {
-      erreurs[e.id] = "";
-      b.disabled = true;
-      envoyer("appairer", { id: e.id, adresse: e.adresse, port: e.port_appairage || 0, code: code.value });
-    };
+    b.onclick = () => { erreurs[e.id] = ""; b.disabled = true; envoyer("appairer", { id: e.id, adresse: e.adresse, port: e.port_appairage || 0, code: code.value }); };
     code.onkeydown = ev => { if (ev.key === "Enter") b.click(); };
     cmd.append(el("label", { textContent: "Code affiché sur ce PC-là :" }), code, b);
     return cmd;
@@ -351,10 +675,8 @@ function commandes(e) {
   sortie.append(option("", "Sortie son de Windows"), ...sorties.map(s => option(s, s)));
   sortie.value = c.sortie;
   sortie.onchange = () => { c.sortie = sortie.value; };
-  const b = el("button", { textContent: "Regarder", className: "principal" });
-  b.onclick = () => envoyer("regarder", {
-    id: e.id, moi: e.moi, video: e.trouve ? c.video : "", son: !e.trouve ? ["*"] : c.son ? [c.son] : [], sortie: c.sortie
-  });
+  const b = el("button", { className: "principal" }, icone("oeil"), document.createTextNode("Regarder"));
+  b.onclick = () => envoyer("regarder", { id: e.id, moi: e.moi, video: e.trouve ? c.video : "", son: !e.trouve ? ["*"] : c.son ? [c.son] : [], sortie: c.sortie });
   cmd.append(sortie, b);
   if (e.appaire && !e.moi) {
     const o = el("button", { className: "lien", textContent: "Oublier" });
@@ -363,35 +685,28 @@ function commandes(e) {
   }
   return cmd;
 }
-
 function dessinerEmetteurs() {
   const zone = $("emetteurs");
-  // Pas de redessin pendant qu'on tape un code ou qu'on choisit une piste
-  const actif = document.activeElement;
-  if (zone.contains(actif) && (actif.tagName === "INPUT" || actif.tagName === "SELECT")) return;
-  if (!emetteurs.length) {
-    zone.replaceChildren(el("div", { className: "vide", textContent: "Aucun PC trouvé pour l'instant" }));
-    return;
-  }
-  zone.replaceChildren(...emetteurs.map(e => {
+  const a = document.activeElement;
+  if (zone.contains(a) && (a.tagName === "INPUT" || a.tagName === "SELECT")) return;
+  zone.replaceChildren(...(emetteurs.length ? emetteurs.map(e => {
     const videos = e.pistes.filter(p => p.video).length, sons = e.pistes.filter(p => !p.video).length;
     const detail = !e.trouve ? "introuvable pour l'instant"
-      : [e.moi ? "ce PC" : "", videos ? pluriel(videos, "image") : "", sons ? pluriel(sons, "son") : ""]
-          .filter(Boolean).join(", ") || "n'envoie rien";
+      : [e.moi ? "ce PC" : "", videos ? pluriel(videos, "image") : "", sons ? pluriel(sons, "son") : ""].filter(Boolean).join(", ") || "n'envoie rien";
     const bloc = el("div", { className: "emetteur" },
-      el("div", { className: "titre" }, el("strong", { textContent: e.nom }), el("small", { textContent: detail })),
-      commandes(e));
-    if (e.vue) {
-      const v = el("div", { className: "vue", textContent: texteVue(vues[e.id]) });
-      v.dataset.id = e.id;
-      bloc.append(v);
-    }
+      el("div", { className: "tete" }, el("strong", { textContent: e.nom }), el("small", { textContent: detail })), commandes(e));
+    if (e.vue) { const v = el("div", { className: "vue", textContent: texteVue(vues[e.id]) }); v.dataset.id = e.id; bloc.append(v); }
     if (erreurs[e.id]) bloc.append(el("div", { className: "erreur", textContent: erreurs[e.id] }));
     return bloc;
-  }));
-}
+  }) : [el("div", { className: "vide-liste", textContent: "Aucun PC trouvé pour l'instant" })]));
 
-// Visionneuses : état chaque seconde ; une fenêtre fermée à la main disparaît de la liste
+  const appaires = emetteurs.filter(e => e.appaire && !e.moi);
+  $("appaires").replaceChildren(...(appaires.length ? appaires.map(e => {
+    const b = el("button", { textContent: "Oublier" });
+    b.onclick = () => envoyer("oublier", { id: e.id });
+    return el("div", { className: "ligne" }, el("span", { textContent: e.nom + (e.trouve ? "" : " (introuvable)") }), b);
+  }) : [el("div", { className: "vide-liste", textContent: "Aucun. Appairez-vous depuis la page Regarder." })]));
+}
 function majVues(liste) {
   vues = {};
   for (const v of liste) vues[v.id] = v;
@@ -403,44 +718,59 @@ function majVues(liste) {
   if (change) dessinerEmetteurs();
   for (const d of document.querySelectorAll(".vue[data-id]")) d.textContent = texteVue(vues[d.dataset.id]);
 }
-
 $("chercher").onclick = () => envoyer("chercher");
 $("appairer-manuel").onclick = () => {
   $("erreur-manuelle").textContent = "";
   envoyer("appairer", { id: "", adresse: $("adresse-manuelle").value.trim(), port: 0, code: $("code-manuel").value });
 };
 
-$("appliquer").onclick = () => { envoyer("appliquer", { sources: brouillon }); };
-$("annuler").onclick = () => { brouillon = choisies.map(s => ({ ...s })); dessinerSources(); majBoutons(); };
-$("nouveau-code").onclick = () => envoyer("nouveau_code");
-
+// ---------- Messages de l'appli ----------
 window.chrome.webview.addEventListener("message", ev => {
   const m = ev.data;
-  if (m.type === "listes") {
-    listes = m;
-    choisies = m.sources;
-    if (!m.garder) brouillon = choisies.map(s => ({ ...s }));
-    dessinerSources();
-    dessinerReglages(m.reglages);
-    majBoutons();
-  } else if (m.type === "etat") {
-    dessinerEtat(m);
-    majVues(m.vues || []);
-  } else if (m.type === "emetteurs") {
-    emetteurs = m.liste;
-    sorties = m.sorties;
-    for (const e of emetteurs) e.vue = e.vue || e.id in vues;
-    dessinerEmetteurs();
-  } else if (m.type === "appairage") {
-    if (m.id) erreurs[m.id] = m.ok ? "" : m.erreur;
-    else if (m.ok) { $("adresse-manuelle").value = ""; $("code-manuel").value = ""; }
-    else $("erreur-manuelle").textContent = m.erreur;
-    if (document.activeElement) document.activeElement.blur();
-    dessinerEmetteurs();
+  switch (m.type) {
+    case "listes":
+      L = { ...L, ecrans: m.ecrans, fenetres: m.fenetres, ouvertes: m.ouvertes, applis: m.applis, micros: m.micros,
+            sources: m.sources, volumes: m.volumes, obs: m.obs ?? L.obs };
+      dessinerTuiles();
+      dessinerSons();
+      if (m.reglages) dessinerReglages(m.reglages);
+      break;
+    case "sources":
+      L.sources = m.sources;
+      L.fenetres = m.fenetres;
+      dessinerTuiles();
+      for (const d of $("sons").children) {
+        const s = lignesSon().find(x => cle(x.src) === d.dataset.cle);
+        const b = d.querySelector(".inter");
+        if (s && b) b.classList.toggle("on", actif(s.src));
+      }
+      break;
+    case "obs":
+      L.obs = m;
+      dessinerTuiles();
+      dessinerSons();
+      break;
+    case "etat": dessinerEtat(m); break;
+    case "niveaux": dessinerNiveaux(m.n); break;
+    case "apercu": dessinerApercu(m.cle, m.img); break;
+    case "emetteurs":
+      emetteurs = m.liste;
+      sorties = m.sorties;
+      for (const e of emetteurs) e.vue = e.vue || e.id in vues;
+      dessinerEmetteurs();
+      break;
+    case "appairage":
+      if (m.id) erreurs[m.id] = m.ok ? "" : m.erreur;
+      else if (m.ok) { $("adresse-manuelle").value = ""; $("code-manuel").value = ""; }
+      else $("erreur-manuelle").textContent = m.erreur;
+      if (document.activeElement) document.activeElement.blur();
+      dessinerEmetteurs();
+      break;
   }
 });
 document.addEventListener("contextmenu", e => e.preventDefault());
 envoyer("pret");
+envoyer("page", { nom: page });
 </script>
 </body>
 </html>

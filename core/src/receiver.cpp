@@ -209,6 +209,15 @@ void Receiver::send_subscription()
 	client_.send(msg.data(), msg.size());
 }
 
+void Receiver::report_latency(uint64_t arrival_to_display_ns)
+{
+	const uint64_t us64 = (uint64_t)client_.latency_ms() * 1000 + arrival_to_display_ns / 1000;
+	const uint32_t us = (uint32_t)std::min<uint64_t>(us64, 0xFFFFFFFFu);
+	const uint8_t msg[5] = {control::kLatencyReport, (uint8_t)(us >> 24), (uint8_t)(us >> 16), (uint8_t)(us >> 8),
+				(uint8_t)us};
+	client_.send(msg, sizeof(msg));
+}
+
 void Receiver::request_keyframe(uint16_t pid)
 {
 	const uint8_t msg[3] = {control::kKeyframeRequest, (uint8_t)(pid >> 8), (uint8_t)pid};

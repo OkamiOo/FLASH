@@ -225,6 +225,8 @@ void VideoTrack::schedule(AVFrame *frame, const Packet &pkt, uint64_t decoded_ns
 
 	// Phase moyenne entre l'affichage réel et le milieu de l'intervalle visé : le son s'y aligne
 	if (conn_.phase_pid == pid_) {
+		if (display > pkt.arrival_ns)
+			conn_.displayed(display - pkt.arrival_ns);
 		const int64_t sample = (int64_t)(display - target) - (int64_t)interval / 2;
 		const int64_t phase = conn_.phase_ns.load();
 		conn_.phase_ns = frames_++ == 0 ? sample : phase + (sample - phase) / 32;

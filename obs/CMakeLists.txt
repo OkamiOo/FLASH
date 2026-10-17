@@ -34,6 +34,7 @@ add_library(flash-obs MODULE
   connection.cpp
   directory.cpp
   plugin.cpp
+  provider.cpp
   sources.cpp
   video_track.cpp
 )

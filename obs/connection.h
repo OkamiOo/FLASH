@@ -48,6 +48,8 @@ public:
 	// La piste vidéo qui fixe cette phase : la principale (PID le plus bas parmi celles reçues)
 	std::atomic<uint16_t> phase_pid{0};
 	static uint64_t video_interval_ns();
+	// Temps de l'arrivée d'une image à son rendu par OBS, renvoyé à l'émetteur chaque seconde
+	void displayed(uint64_t arrival_to_display_ns);
 
 private:
 	explicit Connection(const Target &target);
@@ -83,4 +85,6 @@ private:
 	std::string meta_;
 	int64_t max_video_lag_ = INT64_MIN;
 	int64_t max_audio_lag_ = INT64_MIN;
+	std::atomic<uint64_t> display_sum_{0};
+	std::atomic<uint64_t> display_count_{0};
 };

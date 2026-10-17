@@ -28,6 +28,7 @@ public:
 
 	void push(const flash::MediaPacket &pkt);
 	void set_sources(std::vector<obs_source_t *> sources);
+	flash::Codec codec() const { return codec_; }
 
 private:
 	struct Packet {

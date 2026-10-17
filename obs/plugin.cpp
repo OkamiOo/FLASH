@@ -2,6 +2,8 @@
 #include <flash/log.h>
 #include <flash/measure.h>
 
+#include "provider.h"
+
 #include <obs-module.h>
 
 OBS_DECLARE_MODULE()
@@ -30,6 +32,7 @@ bool obs_module_load(void)
 	flash::set_log_sink(obs_log_sink);
 	flash::enable_precise_timers();
 	register_sources();
+	provider::start();
 	blog(LOG_INFO, "[FLASH] version %s", FLASH_VERSION);
 	if (flash::measure::enabled())
 		blog(LOG_INFO, "[FLASH] journal de mesure actif");
@@ -38,6 +41,7 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
+	provider::stop();
 	flash::measure::shutdown();
 	flash::shutdown_log();
 }

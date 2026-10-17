@@ -8,6 +8,7 @@
 #include <audioclientactivationparams.h>
 #include <audiopolicy.h>
 #include <avrt.h>
+#include <endpointvolume.h>
 #include <initguid.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -37,19 +38,23 @@ std::wstring lower(std::wstring s)
 	return s;
 }
 
-std::wstring exe_of_pid(DWORD pid)
+std::wstring path_of_pid(DWORD pid)
 {
-	std::wstring exe;
+	std::wstring out;
 	if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
 		wchar_t path[MAX_PATH];
 		DWORD len = MAX_PATH;
-		if (QueryFullProcessImageNameW(h, 0, path, &len)) {
-			exe = path;
-			exe = exe.substr(exe.find_last_of(L"\\/") + 1);
-		}
+		if (QueryFullProcessImageNameW(h, 0, path, &len))
+			out = path;
 		CloseHandle(h);
 	}
-	return exe;
+	return out;
+}
+
+std::wstring exe_of_pid(DWORD pid)
+{
+	const std::wstring path = path_of_pid(pid);
+	return path.substr(path.find_last_of(L"\\/") + 1);
 }
 
 // Processus racine d'une appli : le premier processus de ce nom dont le parent porte un
@@ -332,12 +337,14 @@ std::vector<AudioAppInfo> list_audio_apps()
 			    FAILED(ctl2->GetProcessId(&pid)) || pid == 0 || pid == GetCurrentProcessId())
 				continue;
 			ctl->GetState(&state);
-			const std::wstring exe = exe_of_pid(pid);
+			const std::wstring path = path_of_pid(pid);
+			const std::wstring exe = path.substr(path.find_last_of(L"\\/") + 1);
 			if (exe.empty())
 				continue;
 			AudioAppInfo &info = apps[lower(exe)];
 			info.exe = to_utf8(exe);
 			info.pid = pid;
+			info.path = to_utf8(path);
 			info.playing = info.playing || state == AudioSessionStateActive;
 		}
 	}
@@ -420,6 +427,95 @@ std::vector<std::string> list_audio_devices(EDataFlow flow)
 std::vector<std::string> list_microphones()
 {
 	return list_audio_devices(eCapture);
+}
+
+// ---------- Vumètres ----------
+
+struct AudioMeters::Impl {
+	struct Meter {
+		std::string key;
+		ComPtr<IAudioMeterInformation> meter;
+	};
+	std::vector<Meter> meters;
+	uint64_t listed = 0;
+
+	void list()
+	{
+		meters.clear();
+		ComPtr<IMMDeviceEnumerator> en;
+		if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en))))
+			return;
+
+		// Tout le son du PC : la sortie par défaut
+		ComPtr<IMMDevice> out;
+		ComPtr<IAudioMeterInformation> m;
+		if (SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eConsole, &out)) &&
+		    SUCCEEDED(out->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr, (void **)m.GetAddressOf())))
+			meters.push_back({"systeme|", m});
+
+		// Chaque appli, sur toutes les sorties
+		ComPtr<IMMDeviceCollection> devices;
+		UINT n = 0;
+		if (SUCCEEDED(en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices)))
+			devices->GetCount(&n);
+		for (UINT i = 0; i < n; i++) {
+			ComPtr<IMMDevice> dev;
+			ComPtr<IAudioSessionManager2> mgr;
+			ComPtr<IAudioSessionEnumerator> sessions;
+			if (FAILED(devices->Item(i, &dev)) ||
+			    FAILED(dev->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, (void **)mgr.GetAddressOf())) ||
+			    FAILED(mgr->GetSessionEnumerator(&sessions)))
+				continue;
+			int count = 0;
+			sessions->GetCount(&count);
+			for (int k = 0; k < count; k++) {
+				ComPtr<IAudioSessionControl> ctl;
+				ComPtr<IAudioSessionControl2> ctl2;
+				ComPtr<IAudioMeterInformation> sm;
+				DWORD pid = 0;
+				if (FAILED(sessions->GetSession(k, &ctl)) || FAILED(ctl.As(&ctl2)) || FAILED(ctl2->GetProcessId(&pid)) ||
+				    pid == 0 || pid == GetCurrentProcessId() || FAILED(ctl.As(&sm)))
+					continue;
+				const std::wstring exe = exe_of_pid(pid);
+				if (!exe.empty())
+					meters.push_back({"appli|" + to_utf8(exe), sm});
+			}
+		}
+
+		// Micros (le niveau n'est donné que si une appli les écoute)
+		ComPtr<IMMDeviceCollection> mics;
+		n = 0;
+		if (SUCCEEDED(en->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &mics)))
+			mics->GetCount(&n);
+		for (UINT i = 0; i < n; i++) {
+			ComPtr<IMMDevice> dev;
+			ComPtr<IAudioMeterInformation> mm;
+			if (SUCCEEDED(mics->Item(i, &dev)) &&
+			    SUCCEEDED(dev->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr, (void **)mm.GetAddressOf())))
+				meters.push_back({"micro|" + device_name(dev.Get()), mm});
+		}
+	}
+};
+
+AudioMeters::AudioMeters() : impl_(std::make_unique<Impl>()) {}
+
+AudioMeters::~AudioMeters() = default;
+
+std::map<std::string, float> AudioMeters::read()
+{
+	// Les applis vont et viennent : la liste est refaite toutes les 2 s
+	const uint64_t now = now_ns();
+	if (now - impl_->listed > 2'000'000'000ULL) {
+		impl_->list();
+		impl_->listed = now;
+	}
+	std::map<std::string, float> out;
+	for (const auto &m : impl_->meters) {
+		float peak = 0;
+		if (SUCCEEDED(m.meter->GetPeakValue(&peak)))
+			out[m.key] = std::max(out[m.key], peak);
+	}
+	return out;
 }
 
 std::vector<std::string> list_audio_outputs()

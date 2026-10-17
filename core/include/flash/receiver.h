@@ -16,6 +16,8 @@ namespace flash {
 namespace control {
 constexpr uint8_t kKeyframeRequest = 0x01; // suivi du PID sur 2 octets
 constexpr uint8_t kSubscribe = 0x02;       // suivi des PID voulus, 2 octets chacun (aucun = tous)
+// Suivi de 4 octets : latence SRT négociée + temps de l'arrivée à l'affichage, en µs, chaque seconde
+constexpr uint8_t kLatencyReport = 0x03;
 }
 
 // Ramène l'horloge de l'émetteur sur celle du récepteur. Un seul modèle par émetteur :
@@ -88,6 +90,9 @@ public:
 	void stop();
 
 	void request_keyframe(uint16_t pid);
+	// Temps moyen de l'arrivée à l'affichage : l'émetteur y ajoute la latence SRT et son
+	// propre temps de capture à l'envoi pour afficher la latence de bout en bout.
+	void report_latency(uint64_t arrival_to_display_ns);
 	// Pistes à recevoir (vide = toutes). Renvoyé à chaque reconnexion.
 	void subscribe(std::vector<uint16_t> pids);
 	SrtLinkStats stats() { return client_.stats(); }

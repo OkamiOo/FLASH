@@ -6,8 +6,10 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -39,17 +41,22 @@ public:
 	virtual std::string name() const = 0;
 };
 
-struct SenderOptions {
-	SrtOptions srt;
+struct VideoOptions {
 	uint32_t fps = 60;
-	uint32_t video_kbps = 25000;
+	uint32_t kbps = 25000;
 	Codec codec = Codec::H264;
 	std::string encoder = "auto"; // "auto", "nvenc", "mf" ou "logiciel"
+};
+
+struct SenderOptions {
+	SrtOptions srt;
+	VideoOptions video;
 	int audio_bps = 192000;
 	std::string host_name;
 };
 
 struct TrackStats {
+	std::string key;
 	std::string name;
 	bool video = false;
 	uint64_t captured = 0; // images livrées par la capture
@@ -63,20 +70,37 @@ struct TrackStats {
 
 // L'envoi : chaque entrée a sa piste et son encodeur, toutes partagent le même flux
 // MPEG-TS, la même horloge et les mêmes connexions SRT. Une piste qu'aucun récepteur ne
-// demande n'est pas encodée.
+// demande n'est pas encodée. Les pistes s'ajoutent et se retirent en marche, sans couper
+// les autres : les récepteurs voient une nouvelle table de pistes.
 class Sender {
 public:
 	Sender();
 	~Sender();
 
-	bool start(const SenderOptions &options, ComPtr<ID3D11Device> device, std::vector<std::unique_ptr<VideoInput>> video,
-		   std::vector<std::unique_ptr<AudioInput>> audio);
+	bool start(const SenderOptions &options, ComPtr<ID3D11Device> device);
 	void stop();
+
+	// key : la source (« ecran|1 », « appli|discord.exe »…), unique
+	bool add_video(const std::string &key, std::unique_ptr<VideoInput> input);
+	bool add_audio(const std::string &key, std::unique_ptr<AudioInput> input, float gain = 1.0f);
+	void remove(const std::string &key);
+	bool has(const std::string &key) const;
+	void set_gain(const std::string &key, float gain);
+	// Débit, format ou encodeur : les encodeurs vidéo sont refaits, les captures continuent
+	void set_video_options(const VideoOptions &video);
 
 	size_t client_count() const;
 	std::vector<TrackStats> stats(); // remet les compteurs à zéro
 	// Liste JSON des pistes (pid, type, nom), pour les métadonnées et l'annonce de découverte
 	std::string tracks_json() const;
+
+	// Crête du son envoyé (0 à 1) depuis le dernier appel, par piste son
+	std::map<std::string, float> levels();
+	// Dernière image envoyée d'une piste vidéo (NV12), pour un aperçu
+	ComPtr<ID3D11Texture2D> last_frame(const std::string &key) const;
+	// Latence estimée de la capture à l'affichage chez le récepteur le plus lent, en ms
+	// (0 si aucun récepteur ne l'a donnée récemment)
+	double receiver_latency_ms();
 
 private:
 	struct VideoTrack;
@@ -84,17 +108,30 @@ private:
 
 	void on_video(VideoTrack &t, ID3D11Texture2D *nv12, uint64_t capture_ns);
 	void encode_video(VideoTrack &t, ID3D11Texture2D *nv12, uint64_t capture_ns, bool repeat = false);
+	bool open_encoder(VideoTrack &t);
 	void on_audio(AudioTrack &t, const float *samples, uint32_t frames, uint64_t first_ns);
 	void on_message(int client, const uint8_t *data, size_t size);
+	void publish_tracks(); // tracks_ tenu en écriture
 	void housekeeping();
-	std::string metadata() const;
+	std::string metadata() const; // tracks_ tenu
+	std::string tracks_json_unlocked() const;
+	uint16_t free_pid(uint16_t base) const;
 
 	SenderOptions options_;
 	ComPtr<ID3D11Device> device_;
 	SrtServer server_;
 	TsMuxer mux_;
+
+	// Lecteurs : fil de service, voie de retour, statistiques. Écrivains : ajout et retrait.
+	mutable std::shared_mutex tracks_;
 	std::vector<std::unique_ptr<VideoTrack>> video_;
 	std::vector<std::unique_ptr<AudioTrack>> audio_;
+	std::string meta_;
+
+	std::mutex reports_mutex_;
+	std::map<int, std::pair<uint64_t, double>> reports_; // client -> (heure, ms de l'arrivée à l'affichage)
+	std::atomic<uint64_t> send_lag_ns_{0}; // de la capture à l'envoi, moyenne glissante
+
 	std::atomic<bool> running_{false};
 	std::thread housekeeping_;
 };

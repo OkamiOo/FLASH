@@ -15,8 +15,10 @@ add_library(flashcore STATIC
   src/mf_encoder.cpp
   src/mire.cpp
   src/nvenc.cpp
+  src/obs_link.cpp
   src/output_wasapi.cpp
   src/pairing.cpp
+  src/preview.cpp
   src/receiver.cpp
   src/security.cpp
   src/sender.cpp
@@ -27,6 +29,6 @@ add_library(flashcore STATIC
 )
 
 target_include_directories(flashcore PUBLIC include PRIVATE ../third_party/monocypher)
-target_link_libraries(flashcore PUBLIC flash::srt Opus::opus d3d11 dxgi dwmapi ws2_32 winmm avrt mmdevapi windowsapp mfplat mfuuid strmiids iphlpapi crypt32 bcrypt)
+target_link_libraries(flashcore PUBLIC flash::srt Opus::opus d3d11 dxgi dwmapi ws2_32 winmm avrt mmdevapi windowsapp mfplat mfuuid strmiids iphlpapi crypt32 bcrypt windowscodecs)
 # C++/WinRT ne garde pas l'emplacement des erreurs dans le source (aucun chemin dans les binaires)
 target_compile_definitions(flashcore PUBLIC WINRT_NO_SOURCE_LOCATION)

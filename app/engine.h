@@ -1,5 +1,6 @@
 #pragma once
 
+#include "obs_client.h"
 #include "viewer.h"
 
 #include <flash/discovery.h>
@@ -19,9 +20,12 @@
 // récepteurs et des émetteurs appairés y sont chiffrées pour l'utilisateur Windows (DPAPI).
 
 struct SourceChoice {
-	std::string kind; // mire, ecran, fenetre, appli, systeme, micro
+	std::string kind; // mire, ecran, fenetre, appli, systeme, micro, obs-scene, obs-source, obs-programme, obs-son
 	std::string value;
-	bool operator==(const SourceChoice &) const = default;
+	float volume = 1.0f; // son : volume envoyé (0 à 1)
+
+	std::string key() const { return kind + "|" + value; }
+	bool operator==(const SourceChoice &o) const { return kind == o.kind && value == o.value; }
 };
 
 struct EngineSettings {
@@ -63,8 +67,22 @@ public:
 
 	std::vector<SourceChoice> sources();
 	void set_sources(const std::vector<SourceChoice> &sources);
+	void set_source(const SourceChoice &source, bool on);
+	void set_volume(const SourceChoice &source, float volume);
+	float volume_of(const SourceChoice &source);
+	std::map<std::string, float> volumes();
+	// Fenêtres ajoutées par l'utilisateur : gardées comme tuiles même quand elles ne sont pas envoyées
+	std::vector<std::string> windows();
+	void add_window(const std::string &exe);
+	void remove_window(const std::string &exe);
 	EngineSettings settings();
 	void set_settings(const EngineSettings &s);
+
+	// Pour l'interface : crête du son envoyé par piste, dernière image d'une piste vidéo
+	std::map<std::string, float> levels();
+	flash::ComPtr<ID3D11Texture2D> last_frame(const std::string &key);
+	flash::ComPtr<ID3D11Device> device() { return device_; }
+	ObsClient *obs() { return obs_.get(); }
 
 	std::string id();
 	std::string name();
@@ -91,6 +109,7 @@ private:
 	void save(unsigned parts); // data_ tenu ; seules ces parties du fichier sont réécrites
 	void start_network();
 	void restart_sender();
+	void tracks_changed(); // mutex_ tenu : l'annonce de découverte suit les pistes
 	bool authorize(const std::string &stream_id, std::string &passphrase);
 	std::string announce();
 	bool refresh_target(const std::string &sender, flash::SrtOptions &o, int &failures);
@@ -111,10 +130,15 @@ private:
 	std::vector<Peer> receivers_;
 	std::vector<Peer> senders_; // émetteurs avec lesquels ce PC s'est appairé
 	std::vector<SourceChoice> sources_;
+	std::map<std::string, float> volumes_; // par source, même quand elle n'est pas envoyée
+	std::vector<std::string> windows_;
+	bool volumes_dirty_ = false;
+	uint64_t volumes_saved_ = 0;
 	EngineSettings settings_;
 
 	flash::ComPtr<ID3D11Device> device_;
 	std::unique_ptr<flash::Sender> sender_;
+	std::unique_ptr<ObsClient> obs_; // scènes et sources d'OBS sur ce PC
 	flash::PairingServer pairing_;
 	flash::DiscoveryResponder discovery_;
 	std::string tracks_json_ = "[]";

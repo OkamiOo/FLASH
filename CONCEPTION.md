@@ -506,3 +506,120 @@ Limites connues :
   votre ordinateur » (« Informations complémentaires », puis « Exécuter quand même »). Un
   certificat de signature de code règlerait ça avant une diffusion publique.
 - La licence de FLASH lui-même reste à choisir avant toute diffusion.
+
+## 15. Nouvelle interface et envoi depuis OBS (conception)
+
+### Interface
+
+- Maquette retenue : en-tête (éclair, FLASH, nom du PC, latence et débit en direct,
+  pastille d'état), navigation latérale (Envoyer, Regarder, Appareils, Réglages), colonne
+  latérale (code d'invitation, réglages rapides), couleur d'accent ambre `#EF9F27`, thème
+  clair ou sombre de Windows. Icônes dessinées dans la page (SVG) : aucune ressource en ligne.
+- Envoyer : filtres en pastilles (Tout, Scènes OBS, Sources OBS, Écrans, Fenêtres), sources en
+  tuiles avec aperçu et interrupteur, tuile « Ajouter » (choix d'une fenêtre ouverte), son
+  par application en lignes (icône de l'appli, vumètre, volume envoyé, interrupteur).
+- Tout s'applique tout de suite, sans Appliquer ni Annuler. L'émetteur ajoute et retire une
+  piste en marche (nouvelle table de pistes, version de PMT incrémentée), sans couper les
+  autres pistes ni les récepteurs. Les réglages qui refont un encodeur (qualité, format) sont
+  temporisés (400 ms après le dernier mouvement) et ne refont que les encodeurs vidéo.
+- Volume envoyé : gain appliqué avant Opus, changé sans rien redémarrer. Vumètres : niveau de
+  crête de chaque appli lu dans les sessions audio de Windows (aucune capture en plus), celui
+  de la piste envoyée pour les sources actives ; 15 mises à jour par seconde, seulement quand
+  la fenêtre est visible.
+- Aperçus : vignettes de 320×180 réduites par le processeur vidéo du GPU, en JPEG (WIC). Source
+  envoyée : sa dernière image, 4 fois par seconde au plus. Écran ou fenêtre pas envoyé : une
+  capture ponctuelle par seconde. Scènes et sources OBS : rendues par le plugin à la même
+  taille. Rien quand la fenêtre est réduite, cachée ou sur une autre page.
+- Latence de l'en-tête, sans horloge commune entre les PC : temps d'encodage (émetteur) +
+  latence SRT négociée + temps de l'arrivée à l'affichage, que chaque récepteur mesure sur son
+  horloge et renvoie chaque seconde par la voie de retour (message 0x03). On affiche le pire
+  récepteur.
+- Format : H.264 et HEVC. AV1 n'est proposé que si l'encodeur de ce PC et les décodeurs des
+  récepteurs le gèrent ; il demande d'abord un transport AV1 dans le TS et l'échange des
+  capacités de décodage par la voie de retour. Pas dans ce chantier : bouton grisé.
+- Responsive : aucune barre de défilement horizontale ; sous 960 px la colonne latérale passe
+  sous le contenu, sous 760 px la navigation ne garde que ses icônes. Fenêtre de 720×560 au
+  minimum ; au premier lancement, 1100×760 au plus, réduite pour tenir dans l'écran.
+
+### Envoi des scènes et sources OBS
+
+- Le plugin, sur le PC qui envoie, sert l'appli par un tube nommé local (`\\.\pipe\flash-obs`,
+  accès réservé à l'utilisateur) : liste des scènes et sources (mise à jour quand elle change),
+  aperçus, images et son à la demande. Personne connecté : le plugin ne fait rien.
+- Image : pour une scène ou une source choisie, le plugin crée une vue OBS (`obs_view`, qui
+  active ses sources comme dans un projecteur) et la rend, à la taille d'envoi, directement
+  dans une texture D3D11 partagée à verrou à clé (trois en anneau) : aucune copie. OBS rend,
+  libère la clé 1 ; l'appli prend la clé 1, convertit en NV12 sur le GPU (comme pour une
+  capture d'écran), rend la clé 0. Si l'appli n'a pas fini, OBS saute l'image plutôt que
+  d'attendre. Le programme d'OBS est copié depuis la texture principale, sans second rendu.
+- Heure de chaque image : celle du rendu d'OBS (`obs_get_video_frame_time`, QPC) : même
+  horloge que tout FLASH, la synchro avec le son est gardée.
+- Son : les sources audio d'OBS (micro, média, son du bureau) et le mix d'OBS (piste 1)
+  apparaissent dans la liste Son. Le plugin les reçoit par `obs_source_add_audio_capture_callback`
+  (ou le mix), les ramène en 48 kHz stéréo et les passe par le tube avec leur heure.
+- L'appli garde encodage, transport, appairage et synchro : un seul émetteur, une seule
+  identité, un seul port. Écarté : faire envoyer le plugin lui-même (deux émetteurs à gérer,
+  interface coupée en deux) ; recevoir les images d'OBS en mémoire (copies GPU -> CPU -> GPU).
+- OBS fermé : les tuiles OBS le disent ; une source OBS choisie reprend seule quand OBS revient.
+- À mesurer : coût GPU du rendu d'une scène qui n'est pas au programme, latence ajoutée entre
+  le rendu d'OBS et l'encodage dans l'appli.
+
+### Fait (version 0.2.0)
+
+- Interface refaite d'après la maquette : quatre pages, tuiles avec aperçu et interrupteur,
+  son par application avec icône, vumètre, volume et interrupteur, colonne avec le code et les
+  réglages rapides en curseurs. Tout s'applique tout de suite.
+- Émetteur : pistes ajoutées et retirées en marche (le serveur SRT écoute dès le démarrage,
+  même sans source) ; débit, format et encodeur refont seulement les encodeurs vidéo.
+- Volume envoyé par source, gardé dans les réglages ; vumètres lus dans Windows.
+- Aperçus : 4 par seconde pour les sources envoyées (dernière image), une capture ponctuelle
+  toutes les 400 ms à tour de rôle pour les autres écrans et fenêtres, une scène ou source
+  d'OBS tous les 250 ms rendue par le plugin. Rien quand la fenêtre est cachée ou ailleurs.
+- Latence de l'en-tête : chaque récepteur (plugin, visionneuse) renvoie chaque seconde sa
+  latence SRT et son temps de l'arrivée à l'affichage ; l'émetteur y ajoute son temps de la
+  capture à l'envoi.
+- Envoi depuis OBS : tuiles « Programme OBS », scènes et sources ; son des sources et mix
+  d'OBS. En ligne de commande : `--obs-scene`, `--obs-source`, `--obs-programme`,
+  `--obs-son`. Les textures partagées sont au format typé `GS_BGRA_UNORM` : le format
+  `GS_BGRA` d'OBS est créé « typeless », que le processeur vidéo refuse en entrée.
+- Plugin : quand l'émetteur change le format d'une piste en marche, le décodeur est refait.
+
+Vérifié :
+
+- Responsive, en chargeant la page dans un navigateur à toutes les largeurs de 720 à 1920 px
+  (pas de 20), sur deux hauteurs et les quatre pages : aucun débordement horizontal (488 cas).
+  Captures nettes par Chrome sans fenêtre, avec facteur d'échelle 1, 1,25 et 1,5, et sur un
+  écran vertical 1080×1920.
+- Vraie appli (WebView2) : aperçus réels des écrans et des scènes OBS, icônes des applis,
+  vumètres ; allumer une scène OBS et un écran crée deux pistes, en éteindre un ne retire que
+  la sienne ; qualité et volume appliqués et enregistrés.
+- Non-régression en boucle locale (mire, son vers « Steam Streaming Speakers ») : 107 ms,
+  synchro +0,04 ms, aucune image perdue, comme avant.
+
+Mesures de l'envoi depuis OBS (OBS de test, scène « Banc » hors programme avec la capture de
+la fenêtre d'essai et son son, l'appli l'envoie et se regarde, 40 s) :
+
+| Essai | Latence rendu -> écran | Images | GPU 3D | `render_main_texture` d'OBS (médiane) |
+|---|---|---|---|---|
+| OBS et fenêtre d'essai seuls | | | 13 % | 0,023 ms |
+| Scène OBS envoyée par l'appli | 158 ms | 60 i/s, aucune perdue | 21 % | 0,183 ms |
+| Même fenêtre capturée par l'appli | 141 ms | 53 à 56 i/s | 22 % | 0,027 ms |
+
+- Le lien plugin -> appli n'ajoute presque rien : de l'heure de rendu d'OBS à la réception,
+  23,5 ms, comme pour la mire générée par l'appli (encodage et 20 ms de latence SRT).
+- Les 17 ms de plus viennent d'OBS lui-même : sa capture de fenêtre livre l'image 47 ms après
+  son rendu par la fenêtre d'essai, contre 28 ms pour la capture de l'appli.
+- Rendre une scène qui n'est pas au programme coûte environ 0,16 ms par image au fil graphique
+  d'OBS ; au GPU, autant qu'une capture directe.
+- Synchro rapportée aux horodatages : -11,8 ms (écart-type 0,9), comme la capture directe
+  (-12,7 ms). L'écart brut de +42 ms est celui d'OBS entre sa capture de fenêtre et sa capture
+  du son de l'appli.
+- Les 107 à 158 ms de bout en bout comptent les 59 ms de la sortie son virtuelle de Steam :
+  sans le son, une image arrive en 41 ms.
+
+Limites :
+
+- L'aperçu d'une scène qui n'est pas au programme ni envoyée peut rester noir : OBS ne fait
+  tourner une capture de fenêtre ou de jeu que si sa scène est active. Une fois envoyée, la
+  tuile montre sa vraie image.
+- AV1 : pas encore (voir plus haut).

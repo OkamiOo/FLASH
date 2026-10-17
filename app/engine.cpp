@@ -79,27 +79,55 @@ std::string computer_name()
 	return to_utf8(name);
 }
 
-void make_inputs(const std::vector<SourceChoice> &sources, const EngineSettings &s,
-		 std::vector<std::unique_ptr<VideoInput>> &video, std::vector<std::unique_ptr<AudioInput>> &audio)
+bool is_video_kind(const std::string &kind)
 {
-	// La mire démarre sur une seconde pleine de l'horloge commune
-	const uint64_t t0 = (now_ns() / 1'000'000'000ULL + 1) * 1'000'000'000ULL;
-	for (const SourceChoice &c : sources) {
-		if (c.kind == "mire") {
-			video.push_back(make_mire_input(t0));
-			audio.push_back(make_beep_input(t0));
-		} else if (c.kind == "ecran") {
-			video.push_back(make_screen_input(std::atoi(c.value.c_str()), s.max_w, s.max_h, s.cursor));
-		} else if (c.kind == "fenetre") {
-			video.push_back(make_window_input(c.value, s.max_w, s.max_h, s.cursor));
-		} else if (c.kind == "appli") {
-			audio.push_back(make_app_audio_input(c.value));
-		} else if (c.kind == "systeme") {
-			audio.push_back(make_system_audio_input());
-		} else if (c.kind == "micro") {
-			audio.push_back(make_mic_input(c.value));
-		}
+	return kind == "ecran" || kind == "fenetre" || kind == "obs-scene" || kind == "obs-source" || kind == "obs-programme";
+}
+
+// Ajoute à l'envoi la ou les pistes d'une source (la mire en donne deux : image et bip)
+void add_to_sender(Sender &sender, const SourceChoice &c, const EngineSettings &s, ObsClient *obs)
+{
+	const std::string key = c.key();
+	if (c.kind == "mire") {
+		// La mire démarre sur une seconde pleine de l'horloge commune
+		const uint64_t t0 = (now_ns() / 1'000'000'000ULL + 1) * 1'000'000'000ULL;
+		sender.add_video(key + "image", make_mire_input(t0));
+		sender.add_audio(key + "son", make_beep_input(t0), c.volume);
+	} else if (c.kind == "ecran") {
+		sender.add_video(key, make_screen_input(std::atoi(c.value.c_str()), s.max_w, s.max_h, s.cursor));
+	} else if (c.kind == "fenetre") {
+		sender.add_video(key, make_window_input(c.value, s.max_w, s.max_h, s.cursor));
+	} else if (c.kind == "appli") {
+		sender.add_audio(key, make_app_audio_input(c.value), c.volume);
+	} else if (c.kind == "systeme") {
+		sender.add_audio(key, make_system_audio_input(), c.volume);
+	} else if (c.kind == "micro") {
+		sender.add_audio(key, make_mic_input(c.value), c.volume);
+	} else if (obs && (c.kind == "obs-scene" || c.kind == "obs-source" || c.kind == "obs-programme")) {
+		sender.add_video(key, obs->video_input(c.kind, c.value, s.max_w, s.max_h));
+	} else if (obs && c.kind == "obs-son") {
+		sender.add_audio(key, obs->audio_input(c.value), c.volume);
 	}
+}
+
+void remove_from_sender(Sender &sender, const SourceChoice &c)
+{
+	const std::string key = c.key();
+	if (c.kind == "mire") {
+		sender.remove(key + "image");
+		sender.remove(key + "son");
+	} else {
+		sender.remove(key);
+	}
+}
+
+VideoOptions video_options(const EngineSettings &s)
+{
+	VideoOptions v;
+	v.kbps = s.video_kbps;
+	v.codec = s.hevc ? Codec::HEVC : Codec::H264;
+	v.encoder = s.encoder;
+	return v;
 }
 
 } // namespace
@@ -138,9 +166,25 @@ void Engine::load()
 	if (!persist_)
 		return; // en ligne de commande, sources et réglages viennent des arguments
 
+	if (j.contains("volumes") && j["volumes"].is_object()) {
+		for (const auto &[key, v] : j["volumes"].items())
+			if (v.is_number())
+				volumes_[key] = v.get<float>();
+	}
+	if (j.contains("fenetres") && j["fenetres"].is_array()) {
+		for (const auto &f : j["fenetres"])
+			if (f.is_string())
+				windows_.push_back(f.get<std::string>());
+	}
 	if (j.contains("sources") && j["sources"].is_array()) {
-		for (const auto &s : j["sources"])
-			sources_.push_back({s.value("type", ""), s.value("valeur", "")});
+		for (const auto &s : j["sources"]) {
+			SourceChoice c{s.value("type", ""), s.value("valeur", "")};
+			if (auto it = volumes_.find(c.key()); it != volumes_.end())
+				c.volume = it->second;
+			sources_.push_back(c);
+			if (c.kind == "fenetre" && std::find(windows_.begin(), windows_.end(), c.value) == windows_.end())
+				windows_.push_back(c.value);
+		}
 	}
 	if (j.contains("reglages") && j["reglages"].is_object()) {
 		const json &r = j["reglages"];
@@ -189,6 +233,10 @@ void Engine::save(unsigned parts)
 		j["sources"] = json::array();
 		for (const SourceChoice &s : sources_)
 			j["sources"].push_back({{"type", s.kind}, {"valeur", s.value}});
+		j["volumes"] = json::object();
+		for (const auto &[key, v] : volumes_)
+			j["volumes"][key] = v;
+		j["fenetres"] = windows_;
 		j["reglages"] = {{"adresse", settings_.address}, {"port", settings_.port},     {"latence", settings_.latency_ms},
 				 {"debit", settings_.video_kbps},  {"hevc", settings_.hevc},     {"encodeur", settings_.encoder},
 				 {"largeur", settings_.max_w},     {"hauteur", settings_.max_h}, {"curseur", settings_.cursor},
@@ -239,6 +287,7 @@ bool Engine::start(bool persist, bool network)
 	FLOG_I("GPU : %s", gpu.c_str());
 
 	start_network();
+	obs_ = std::make_unique<ObsClient>(device_);
 	restart_sender();
 	return true;
 }
@@ -278,11 +327,20 @@ void Engine::stop()
 	views.clear();
 
 	std::lock_guard lock(mutex_);
-	sender_.reset();
+	{
+		std::lock_guard d(data_);
+		if (volumes_dirty_)
+			save(kSettings);
+		volumes_dirty_ = false;
+	}
+	sender_.reset(); // les entrées OBS se détachent du client avant qu'il s'arrête
+	obs_.reset();
 	discovery_.stop();
 	pairing_.stop();
 }
 
+// L'envoi écoute dès le démarrage, même sans source : un récepteur reste connecté pendant
+// qu'on choisit ce qu'on envoie. Refait seulement quand l'adresse, le port ou la latence changent.
 void Engine::restart_sender()
 {
 	if (sender_) {
@@ -299,29 +357,34 @@ void Engine::restart_sender()
 		s = settings_;
 		name = name_;
 	}
-	if (sources.empty() || !device_)
+	if (!device_)
 		return;
-
-	std::vector<std::unique_ptr<VideoInput>> video;
-	std::vector<std::unique_ptr<AudioInput>> audio;
-	make_inputs(sources, s, video, audio);
 
 	SenderOptions o;
 	o.srt.address = s.address;
 	o.srt.port = s.port;
 	o.srt.latency_ms = s.latency_ms;
 	o.srt.authorize = [this](const std::string &sid, std::string &pass) { return authorize(sid, pass); };
-	o.video_kbps = s.video_kbps;
-	o.codec = s.hevc ? Codec::HEVC : Codec::H264;
-	o.encoder = s.encoder;
+	o.video = video_options(s);
 	o.host_name = name;
 
 	auto sender = std::make_unique<Sender>();
-	if (!sender->start(o, device_, std::move(video), std::move(audio)))
+	if (!sender->start(o, device_))
 		return;
+	for (const SourceChoice &c : sources)
+		add_to_sender(*sender, c, s, obs_.get());
 	std::lock_guard d(data_);
 	tracks_json_ = sender->tracks_json();
 	sender_ = std::move(sender);
+}
+
+void Engine::tracks_changed()
+{
+	if (!sender_)
+		return;
+	const std::string tracks = sender_->tracks_json();
+	std::lock_guard d(data_);
+	tracks_json_ = tracks;
 }
 
 // Un récepteur appairé reçoit sa clé, la visionneuse de ce PC la clé de la session ; un inconnu
@@ -355,17 +418,116 @@ std::vector<SourceChoice> Engine::sources()
 	return sources_;
 }
 
+// Seules les différences sont appliquées : une source retirée coupe sa piste, une source
+// ajoutée en crée une, les autres continuent sans interruption
 void Engine::set_sources(const std::vector<SourceChoice> &sources)
+{
+	std::lock_guard lock(mutex_);
+	std::vector<SourceChoice> removed, added, volume;
+	EngineSettings s;
+	{
+		std::lock_guard d(data_);
+		for (const SourceChoice &old : sources_)
+			if (std::find(sources.begin(), sources.end(), old) == sources.end())
+				removed.push_back(old);
+		for (const SourceChoice &c : sources) {
+			auto it = std::find(sources_.begin(), sources_.end(), c);
+			if (it == sources_.end())
+				added.push_back(c);
+			else if (it->volume != c.volume)
+				volume.push_back(c);
+		}
+		if (removed.empty() && added.empty() && volume.empty())
+			return;
+		sources_ = sources;
+		s = settings_;
+		save(kSettings);
+	}
+	if (!sender_)
+		return;
+	for (const SourceChoice &c : removed)
+		remove_from_sender(*sender_, c);
+	for (const SourceChoice &c : added)
+		add_to_sender(*sender_, c, s, obs_.get());
+	for (const SourceChoice &c : volume)
+		sender_->set_gain(c.kind == "mire" ? c.key() + "son" : c.key(), c.volume);
+	tracks_changed();
+}
+
+void Engine::set_source(const SourceChoice &source, bool on)
+{
+	std::vector<SourceChoice> list = sources();
+	auto it = std::find(list.begin(), list.end(), source);
+	if (on && it == list.end()) {
+		SourceChoice c = source;
+		c.volume = volume_of(source);
+		list.push_back(c);
+	}
+	else if (!on && it != list.end())
+		list.erase(it);
+	set_sources(list);
+}
+
+// Volume envoyé : gardé avec la source, appliqué tout de suite à sa piste si elle est envoyée
+void Engine::set_volume(const SourceChoice &source, float volume)
 {
 	std::lock_guard lock(mutex_);
 	{
 		std::lock_guard d(data_);
-		if (sources == sources_)
-			return;
-		sources_ = sources;
+		auto it = std::find(sources_.begin(), sources_.end(), source);
+		if (it != sources_.end())
+			it->volume = volume;
+		volumes_[source.key()] = volume;
+		// Un curseur qu'on fait glisser envoie des dizaines de valeurs : le disque n'en voit
+		// qu'une toutes les demi-secondes, la dernière est écrite à l'arrêt
+		const uint64_t now = now_ns();
+		volumes_dirty_ = true;
+		if (now - volumes_saved_ > 500'000'000ULL) {
+			save(kSettings);
+			volumes_saved_ = now;
+			volumes_dirty_ = false;
+		}
+	}
+	if (sender_)
+		sender_->set_gain(source.kind == "mire" ? source.key() + "son" : source.key(), volume);
+}
+
+float Engine::volume_of(const SourceChoice &source)
+{
+	std::lock_guard d(data_);
+	auto it = volumes_.find(source.key());
+	return it != volumes_.end() ? it->second : 1.0f;
+}
+
+std::map<std::string, float> Engine::volumes()
+{
+	std::lock_guard d(data_);
+	return volumes_;
+}
+
+std::vector<std::string> Engine::windows()
+{
+	std::lock_guard d(data_);
+	return windows_;
+}
+
+void Engine::add_window(const std::string &exe)
+{
+	{
+		std::lock_guard d(data_);
+		if (std::find(windows_.begin(), windows_.end(), exe) == windows_.end())
+			windows_.push_back(exe);
 		save(kSettings);
 	}
-	restart_sender();
+	set_source({"fenetre", exe}, true);
+}
+
+void Engine::remove_window(const std::string &exe)
+{
+	set_source({"fenetre", exe}, false);
+	std::lock_guard d(data_);
+	windows_.erase(std::remove(windows_.begin(), windows_.end(), exe), windows_.end());
+	save(kSettings);
 }
 
 EngineSettings Engine::settings()
@@ -374,22 +536,41 @@ EngineSettings Engine::settings()
 	return settings_;
 }
 
+// Adresse, port ou latence : envoi refait. Débit, format, encodeur : encodeurs vidéo refaits,
+// captures et pistes son intactes. Taille ou curseur : captures vidéo refaites.
 void Engine::set_settings(const EngineSettings &s)
 {
 	std::lock_guard lock(mutex_);
-	bool rebind;
+	EngineSettings old;
+	std::vector<SourceChoice> sources;
 	{
 		std::lock_guard d(data_);
-		rebind = s.address != settings_.address;
+		old = settings_;
 		settings_ = s;
+		sources = sources_;
 		save(kSettings);
 	}
+	const bool rebind = s.address != old.address;
 	if (rebind && network_) {
 		discovery_.stop();
 		pairing_.stop();
 		start_network();
 	}
-	restart_sender();
+	if (rebind || s.port != old.port || s.latency_ms != old.latency_ms || !sender_) {
+		restart_sender();
+		return;
+	}
+	if (s.video_kbps != old.video_kbps || s.hevc != old.hevc || s.encoder != old.encoder)
+		sender_->set_video_options(video_options(s));
+	if (s.max_w != old.max_w || s.max_h != old.max_h || s.cursor != old.cursor) {
+		for (const SourceChoice &c : sources) {
+			if (is_video_kind(c.kind)) {
+				remove_from_sender(*sender_, c);
+				add_to_sender(*sender_, c, s, obs_.get());
+			}
+		}
+	}
+	tracks_changed();
 }
 
 std::string Engine::id()
@@ -707,15 +888,34 @@ json Engine::status()
 	const double secs = last_stats_ns_ ? (now - last_stats_ns_) / 1e9 : 0;
 	last_stats_ns_ = now;
 	j["pistes"] = json::array();
+	double kbps_total = 0;
 	if (sender_) {
 		for (const TrackStats &t : sender_->stats()) {
-			j["pistes"].push_back({{"nom", t.name},
+			const double kbps = secs > 0 ? t.bytes * 8 / secs / 1000 : 0;
+			kbps_total += kbps;
+			j["pistes"].push_back({{"cle", t.key},
+					       {"nom", t.name},
 					       {"video", t.video},
 					       {"active", t.active},
 					       {"ips", t.video && secs > 0 ? t.frames / secs : 0},
-					       {"kbps", secs > 0 ? t.bytes * 8 / secs / 1000 : 0},
+					       {"kbps", kbps},
 					       {"encodage_ms", t.encode_ms_avg}});
 		}
 	}
+	// En-tête : débit envoyé et latence de bout en bout du récepteur le plus lent
+	j["debit_kbps"] = kbps_total;
+	j["latence_ms"] = sender_ ? sender_->receiver_latency_ms() : 0;
 	return j;
+}
+
+std::map<std::string, float> Engine::levels()
+{
+	std::lock_guard lock(mutex_);
+	return sender_ ? sender_->levels() : std::map<std::string, float>{};
+}
+
+ComPtr<ID3D11Texture2D> Engine::last_frame(const std::string &key)
+{
+	std::lock_guard lock(mutex_);
+	return sender_ ? sender_->last_frame(key) : nullptr;
 }

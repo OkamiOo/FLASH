@@ -3,6 +3,7 @@
 #include "flash/sender.h"
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,12 +41,27 @@ struct ScreenInfo {
 struct WindowInfo {
 	std::string title;
 	std::string exe;
+	std::string path; // chemin complet de l'exécutable (icône)
 };
 
 struct AudioAppInfo {
 	std::string exe;
-	uint32_t pid;
-	bool playing; // son en cours de lecture
+	uint32_t pid = 0;
+	bool playing = false; // son en cours de lecture
+	std::string path;     // chemin complet de l'exécutable (icône)
+};
+
+// Niveaux de crête (0 à 1) lus dans Windows, sans rien capturer : chaque appli qui joue du son
+// (« appli|<exe> »), tout le son du PC (« systeme| ») et chaque micro (« micro|<nom> »).
+class AudioMeters {
+public:
+	AudioMeters();
+	~AudioMeters();
+	std::map<std::string, float> read();
+
+private:
+	struct Impl;
+	std::unique_ptr<Impl> impl_;
 };
 
 std::vector<ScreenInfo> list_screens();

@@ -155,6 +155,8 @@ void Connection::rebind()
 
 	for (auto &[pid, sources] : want_video) {
 		auto &track = video_[pid];
+		if (track && track->codec() != codecs[pid])
+			track.reset(); // l'émetteur a changé de format : nouveau décodeur
 		if (!track)
 			track = std::make_unique<VideoTrack>(*this, pid, codecs[pid]);
 		track->set_sources(std::move(sources));
@@ -244,7 +246,16 @@ void Connection::on_packet(const flash::MediaPacket &pkt)
 		last_report_ = pkt.arrival_ns;
 		flash::measure::clock(clock_.offset_ns(), phase_ns.load(), max_video_lag_, max_audio_lag_);
 		max_video_lag_ = max_audio_lag_ = INT64_MIN;
+		const uint64_t n = display_count_.exchange(0), sum = display_sum_.exchange(0);
+		if (n)
+			receiver_.report_latency(sum / n);
 	}
+}
+
+void Connection::displayed(uint64_t arrival_to_display_ns)
+{
+	display_sum_ += arrival_to_display_ns;
+	display_count_++;
 }
 
 void Connection::on_state(bool connected)

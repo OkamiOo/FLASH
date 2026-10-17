@@ -298,7 +298,18 @@ SrtLinkStats SrtClient::stats()
 		out.dropped = perf.pktRcvDrop;
 		out.retransmitted = perf.pktRcvRetrans;
 	}
+	out.latency_ms = latency_ms();
 	return out;
+}
+
+int SrtClient::latency_ms() const
+{
+	const int s = sock_;
+	int value = 0;
+	int len = sizeof(value);
+	if (s < 0 || !connected_ || srt_getsockflag(s, SRTO_RCVLATENCY, &value, &len) != 0)
+		return 0;
+	return value;
 }
 
 void SrtClient::run()

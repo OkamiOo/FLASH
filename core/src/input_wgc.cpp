@@ -1,7 +1,8 @@
-#include "converter.h"
+#include "flash/converter.h"
 #include "flash/clock.h"
 #include "flash/inputs.h"
 #include "flash/log.h"
+#include "flash/preview.h"
 
 #include <windows.h>
 #include <dwmapi.h>
@@ -403,12 +404,94 @@ std::vector<WindowInfo> list_windows()
 			if (capturable_window(hwnd)) {
 				wchar_t title[512];
 				GetWindowTextW(hwnd, title, 512);
-				((std::vector<WindowInfo> *)p)->push_back({to_utf8(title), to_utf8(exe_of(hwnd))});
+				DWORD pid = 0;
+				GetWindowThreadProcessId(hwnd, &pid);
+				std::wstring path;
+				if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+					wchar_t buf[MAX_PATH];
+					DWORD len = MAX_PATH;
+					if (QueryFullProcessImageNameW(h, 0, buf, &len))
+						path = buf;
+					CloseHandle(h);
+				}
+				((std::vector<WindowInfo> *)p)->push_back({to_utf8(title), to_utf8(exe_of(hwnd)), to_utf8(path)});
 			}
 			return TRUE;
 		},
 		(LPARAM)&out);
 	return out;
+}
+
+// Une seule image, pour un aperçu : la capture s'ouvre, attend la première image (300 ms au
+// plus), la copie et se referme.
+ComPtr<ID3D11Texture2D> snapshot(ID3D11Device *device, int screen, const std::string &window)
+{
+	try {
+		auto interop = winrt::get_activation_factory<wgc::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+		wgc::GraphicsCaptureItem item{nullptr};
+		if (screen > 0) {
+			const auto list = screens();
+			if (screen > (int)list.size())
+				return nullptr;
+			winrt::check_hresult(interop->CreateForMonitor(list[screen - 1].monitor, winrt::guid_of<wgc::GraphicsCaptureItem>(),
+								       winrt::put_abi(item)));
+		} else {
+			HWND hwnd = find_window(to_wide(window));
+			if (!hwnd || IsIconic(hwnd))
+				return nullptr;
+			winrt::check_hresult(
+				interop->CreateForWindow(hwnd, winrt::guid_of<wgc::GraphicsCaptureItem>(), winrt::put_abi(item)));
+		}
+
+		ComPtr<IDXGIDevice> dxgi;
+		if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi))))
+			return nullptr;
+		winrt::com_ptr<IInspectable> insp;
+		winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(), insp.put()));
+		auto d3d = insp.as<wdx::Direct3D11::IDirect3DDevice>();
+		auto pool = wgc::Direct3D11CaptureFramePool::CreateFreeThreaded(d3d, wdx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+										    1, item.Size());
+		auto session = pool.CreateCaptureSession(item);
+		using winrt::Windows::Foundation::Metadata::ApiInformation;
+		static const bool borderless =
+			ApiInformation::IsPropertyPresent(L"Windows.Graphics.Capture.GraphicsCaptureSession", L"IsBorderRequired");
+		if (borderless) {
+			static std::once_flag access;
+			std::call_once(access, [] {
+				wgc::GraphicsCaptureAccess::RequestAccessAsync(wgc::GraphicsCaptureAccessKind::Borderless).get();
+			});
+			session.IsBorderRequired(false);
+		}
+		if (ApiInformation::IsPropertyPresent(L"Windows.Graphics.Capture.GraphicsCaptureSession", L"IsCursorCaptureEnabled"))
+			session.IsCursorCaptureEnabled(false);
+		session.StartCapture();
+
+		ComPtr<ID3D11Texture2D> copy;
+		const uint64_t deadline = now_ns() + 300'000'000ULL;
+		while (!copy && now_ns() < deadline) {
+			if (auto frame = pool.TryGetNextFrame()) {
+				ComPtr<ID3D11Texture2D> tex = dxgi_interface<ID3D11Texture2D>(frame.Surface());
+				D3D11_TEXTURE2D_DESC desc;
+				tex->GetDesc(&desc);
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+				desc.CPUAccessFlags = 0;
+				desc.MiscFlags = 0;
+				if (SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &copy))) {
+					ComPtr<ID3D11DeviceContext> ctx;
+					device->GetImmediateContext(&ctx);
+					ctx->CopyResource(copy.Get(), tex.Get());
+				}
+			} else {
+				Sleep(5);
+			}
+		}
+		session.Close();
+		pool.Close();
+		return copy;
+	} catch (const winrt::hresult_error &) {
+		return nullptr;
+	}
 }
 
 } // namespace flash

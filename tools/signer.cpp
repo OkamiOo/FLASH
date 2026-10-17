@@ -200,18 +200,29 @@ int self_test()
 	return failures ? 1 : 0;
 }
 
+// Arguments lus en Unicode : les notes et les chemins gardent leurs accents
+std::string utf8(const wchar_t *w)
+{
+	const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+	std::string s(n > 0 ? n - 1 : 0, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
+	return s;
+}
+
 } // namespace
 
-int main(int argc, char **argv)
+int wmain(int argc, wchar_t **argv)
 {
 	SetConsoleOutputCP(CP_UTF8);
-	const std::vector<std::string> a(argv + 1, argv + argc);
+	std::vector<std::string> a;
+	for (int i = 1; i < argc; i++)
+		a.push_back(utf8(argv[i]));
 	if (a.size() == 2 && a[0] == "cle")
-		return make_key(fs::path(a[1]));
+		return make_key(fs::path(argv[2]));
 	if (a.size() == 2 && a[0] == "publique")
-		return show_public(fs::path(a[1]));
+		return show_public(fs::path(argv[2]));
 	if ((a.size() == 4 || a.size() == 5) && a[0] == "manifeste")
-		return make_manifest(fs::path(a[1]), a[2], fs::path(a[3]), a.size() == 5 ? a[4] : "");
+		return make_manifest(fs::path(argv[2]), a[2], fs::path(argv[4]), a.size() == 5 ? a[4] : "");
 	if (a.size() == 1 && a[0] == "essai")
 		return self_test();
 	std::fprintf(stderr, "usage : signer cle <fichier> | publique <fichier> | manifeste <dossier> <version> <fichier.cle> [notes] | essai\n");

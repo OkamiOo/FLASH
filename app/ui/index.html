@@ -184,6 +184,10 @@ dialog .choix { display: flex; align-items: center; gap: 10px; width: 100%; bord
 dialog .choix img, dialog .choix svg.i { width: 22px; height: 22px; flex: none; }
 dialog .choix span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 dialog .choix small { color: var(--discret); }
+dialog .texte { padding: 12px 14px 14px; }
+dialog .texte p { margin: 0 0 10px; }
+[hidden] { display: none !important; }
+dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -263,6 +267,21 @@ dialog .choix small { color: var(--discret); }
             <button class="inter" id="curseur" role="switch"></button>
           </div>
         </div>
+        <p class="aide" style="margin-top:8px">Au premier envoi sur le réseau, Windows demande s'il faut autoriser FLASH : acceptez pour les réseaux privés.</p>
+        <div class="carte">
+          <div class="reglage">
+            <div>Plugin FLASH dans OBS<small id="plugin-etat"></small></div>
+            <button id="plugin-action" hidden></button>
+          </div>
+          <div class="reglage">
+            <div>Mises à jour<small id="maj-etat"></small></div>
+            <button class="principal" id="relancer" hidden>Relancer FLASH</button>
+          </div>
+          <div class="reglage">
+            <div>Retirer FLASH de ce PC<small id="retrait-aide"></small></div>
+            <button id="retrait">Tout retirer</button>
+          </div>
+        </div>
         <p class="aide" id="version" style="margin-top:12px"></p>
       </section>
     </main>
@@ -288,6 +307,16 @@ dialog .choix small { color: var(--discret); }
 <dialog id="ajout">
   <div class="tete"><span>Ajouter une fenêtre</span><button class="icone" id="fermer-ajout" title="Fermer"><svg class="i" data-icone="fermer"></svg></button></div>
   <div class="liste" id="liste-fenetres"></div>
+</dialog>
+
+<dialog id="accueil-plugin">
+  <div class="tete"><span>Installer le plugin FLASH dans OBS ?</span></div>
+  <div class="texte">
+    <p>Le plugin ajoute à OBS les sources « FLASH vidéo » et « FLASH audio », pour recevoir les images et le son de vos autres PC. Windows peut demander l'autorisation de l'installer.</p>
+    <p class="aide" id="accueil-obs" hidden>OBS est ouvert : fermez-le pour installer le plugin, puis relancez-le.</p>
+    <p class="aide" id="accueil-erreur" hidden></p>
+    <div class="actions"><button id="accueil-plus-tard">Plus tard</button><button class="principal" id="accueil-installer">Installer</button></div>
+  </div>
 </dialog>
 
 <script>
@@ -560,6 +589,45 @@ function dessinerReglages(r) {
   }
   $("version").textContent = r.version ? "FLASH " + r.version : "";
 }
+// ---------- Plugin OBS, mises à jour, retrait ----------
+function dessinerLivraison(l) {
+  const etats = { sans_source: "Absent de ce dossier de FLASH.", absent: "Pas encore installé.", a_jour: "Installé et à jour.",
+                  different: "Une autre version est installée." };
+  let texte = etats[l.plugin] || "";
+  if (l.occupe) texte = "Installation…";
+  else if (l.erreur) texte = l.erreur;
+  else if (l.obs_ouvert && l.plugin !== "a_jour") texte += " Fermez OBS pour l'installer.";
+  $("plugin-etat").textContent = texte;
+  const b = $("plugin-action");
+  b.hidden = l.plugin === "sans_source";
+  b.textContent = l.plugin === "absent" ? "Installer" : l.plugin === "different" ? "Mettre à jour" : "Réinstaller";
+  b.disabled = !!l.obs_ouvert || !!l.occupe;
+  $("maj-etat").textContent = l.maj || "Rien de neuf pour l'instant.";
+  $("relancer").hidden = !l.relancer;
+  $("retrait-aide").textContent = "Plugin d'OBS, lancement avec Windows et réglages, appareils appairés compris" +
+    (l.edition === "installee" ? ", puis la désinstallation de FLASH." : ". Supprimez ensuite le dossier de FLASH.");
+  $("retrait").disabled = !!l.occupe;
+
+  const d = $("accueil-plugin");
+  if (l.proposer_plugin && !d.open && !d.dataset.vu) { d.dataset.vu = "1"; d.showModal(); }
+  if (d.open) {
+    $("accueil-obs").hidden = !l.obs_ouvert;
+    $("accueil-installer").disabled = !!l.obs_ouvert || !!l.occupe;
+    $("accueil-installer").textContent = l.occupe ? "Installation…" : "Installer";
+    $("accueil-erreur").textContent = l.erreur || "";
+    $("accueil-erreur").hidden = !l.erreur;
+    if (l.plugin === "a_jour") d.close();
+  }
+}
+$("plugin-action").onclick = () => envoyer("installer_plugin");
+$("accueil-installer").onclick = () => envoyer("installer_plugin");
+$("accueil-plus-tard").onclick = () => { envoyer("plus_tard_plugin"); $("accueil-plugin").close(); };
+$("relancer").onclick = () => envoyer("relancer");
+$("retrait").onclick = () => {
+  if (confirm("Retirer FLASH de ce PC ?\n\nLe plugin d'OBS, le lancement avec Windows et les réglages (appareils appairés compris) seront effacés, puis FLASH se fermera."))
+    envoyer("retrait_complet");
+};
+
 $("qualite").oninput = majEtiquettes;
 $("reseau").oninput = majEtiquettes;
 $("qualite").onchange = envoyerReglages;
@@ -774,6 +842,7 @@ window.chrome.webview.addEventListener("message", ev => {
       dessinerSons();
       break;
     case "etat": dessinerEtat(m); break;
+    case "livraison": dessinerLivraison(m); break;
     case "niveaux": dessinerNiveaux(m.n); break;
     case "apercu": dessinerApercu(m.cle, m.img); break;
     case "emetteurs":

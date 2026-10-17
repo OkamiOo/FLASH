@@ -3,6 +3,7 @@
 #include "banc.h"
 #include "engine.h"
 #include "ui.h"
+#include "updater.h"
 
 #include <flash/clock.h>
 #include <flash/discovery.h>
@@ -39,6 +40,7 @@ const char *kUsage = R"(Usage :
   flash [sources] [réglages]        envoie les sources choisies
   flash --voir émetteur [options]   ouvre une visionneuse (avec ou sans envoi)
   flash --banc [--sortie nom] [--ecran N]   fenêtre d'essai (image + bips) à capturer
+  flash --chercher-maj              cherche et installe une mise à jour maintenant
 
 Visionneuse (émetteur : nom, identifiant, adresse IP, ou « moi » pour ce PC) :
   --piste nom            piste vidéo (par défaut la première ; « - » : aucune)
@@ -336,7 +338,26 @@ void attach_console()
 
 int main(int argc, char **argv)
 {
+	// Essai d'une mise à jour, assistant élevé du plugin OBS : rien d'autre ne démarre
+	if (argc >= 2 && std::string(argv[1]) == "--chercher-maj") {
+		attach_console();
+		SetConsoleOutputCP(CP_UTF8);
+	}
+	if (const int r = updater::run_command(argc, argv); r >= 0) {
+		shutdown_log();
+		return r;
+	}
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+	// Relance après une mise à jour : l'instance précédente doit d'abord être partie
+	if (argc >= 3 && std::string(argv[1]) == "--attendre") {
+		if (HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)std::strtoul(argv[2], nullptr, 10))) {
+			WaitForSingleObject(p, 20000);
+			CloseHandle(p);
+		}
+		const int code = run_ui(false);
+		shutdown_log();
+		return code;
+	}
 	if (argc <= 1 || std::string(argv[1]) == "--demarrage") {
 		const int code = run_ui(argc > 1);
 		shutdown_log();

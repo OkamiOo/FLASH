@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "engine.h"
 #include "resource.h"
+#include "updater.h"
 
 #include <flash/clock.h>
 #include <flash/inputs.h>
@@ -20,6 +21,7 @@
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <mutex>
 #include <thread>
 
 using Microsoft::WRL::Callback;
@@ -31,6 +33,7 @@ namespace {
 
 constexpr UINT WM_TRAY = WM_APP + 1;
 constexpr UINT WM_TO_PAGE = WM_APP + 2;
+constexpr UINT WM_CLOSE_APP = WM_APP + 3; // quitter depuis un autre fil (relance, retrait complet)
 constexpr UINT kMenuOpen = 1, kMenuQuit = 2;
 constexpr UINT_PTR kTimerStatus = 1, kTimerSettings = 2;
 constexpr wchar_t kClass[] = L"FlashFenetre";
@@ -111,6 +114,17 @@ struct App {
 	// Vumètres et aperçus, seulement quand la fenêtre est visible sur la page Envoyer
 	std::thread live;
 	std::atomic<bool> live_stop{false};
+
+	// Mises à jour et plugin OBS (fil des mises à jour, fil de travail)
+	std::mutex delivery_mutex;
+	std::string update_text;
+	bool update_ready = false; // nouvelle version posée, active au prochain lancement
+	std::string plugin_error;
+	std::atomic<bool> plugin_busy{false};
+	HANDLE update_stop = nullptr;
+	std::thread update_thread;
+	// En partant : retrait complet (réglages, désinstallation) ou relance après une mise à jour
+	bool wipe_on_exit = false, uninstall_on_exit = false, restart_on_exit = false;
 };
 App *g = nullptr;
 
@@ -403,6 +417,81 @@ void copy_to_clipboard(const std::string &text)
 	CloseClipboard();
 }
 
+// ---------- Mises à jour, plugin OBS, retrait ----------
+
+// État pour la carte « FLASH et OBS » des réglages et la proposition du premier lancement
+void send_delivery()
+{
+	const updater::Plugin p = updater::plugin_state();
+	json j = {{"type", "livraison"},
+		  {"plugin", p == updater::Plugin::NoSource ? "sans_source"
+			     : p == updater::Plugin::Absent  ? "absent"
+			     : p == updater::Plugin::UpToDate ? "a_jour"
+							     : "different"},
+		  {"obs_ouvert", updater::obs_running()},
+		  {"occupe", g->plugin_busy.load()},
+		  {"edition", updater::installed_edition() ? "installee" : "portable"},
+		  {"proposer_plugin", p == updater::Plugin::Absent && !updater::plugin_offered()}};
+	{
+		std::lock_guard lock(g->delivery_mutex);
+		j["maj"] = g->update_text;
+		j["relancer"] = g->update_ready;
+		j["erreur"] = g->plugin_error;
+	}
+	to_page(j);
+}
+
+// Copie ou retrait du plugin : l'élévation éventuelle bloque, on ne l'attend pas sur le fil de travail
+void plugin_job(bool install, bool then_quit)
+{
+	if (g->plugin_busy.exchange(true))
+		return;
+	g->worker->post(send_delivery);
+	std::thread([install, then_quit] {
+		const std::string error = install ? updater::install_plugin() : updater::remove_plugin();
+		{
+			std::lock_guard lock(g->delivery_mutex);
+			g->plugin_error = error;
+		}
+		if (install && error.empty())
+			updater::set_plugin_offered();
+		g->plugin_busy = false;
+		if (then_quit && error.empty()) {
+			// Retrait complet : réglages et désinstallation une fois le moteur arrêté
+			g->wipe_on_exit = true;
+			g->uninstall_on_exit = updater::installed_edition();
+			PostMessageW(g->hwnd, WM_CLOSE_APP, 0, 0);
+			return;
+		}
+		g->worker->post(send_delivery);
+	}).detach();
+}
+
+void update_loop()
+{
+	// Pas au démarrage même, pour ne pas ralentir l'ouverture ; ensuite une fois par jour
+	DWORD wait = 5000;
+	while (WaitForSingleObject(g->update_stop, wait) == WAIT_TIMEOUT) {
+		wait = 24 * 3600 * 1000;
+		if (!updater::has_address())
+			continue;
+		std::string message;
+		const updater::Result r = updater::check(message);
+		if (r == updater::Result::Nothing)
+			continue;
+		{
+			std::lock_guard lock(g->delivery_mutex);
+			if (r == updater::Result::Installed) {
+				g->update_text = "FLASH " + message + " est prêt : relancez FLASH pour en profiter.";
+				g->update_ready = true;
+			} else {
+				g->update_text = "Mise à jour non installée : " + message + ".";
+			}
+		}
+		g->worker->post(send_delivery);
+	}
+}
+
 void on_page_message(const json &m)
 {
 	const std::string action = m.value("action", "");
@@ -410,7 +499,17 @@ void on_page_message(const json &m)
 		g->worker->post([] {
 			send_lists(true);
 			send_status();
+			send_delivery();
 		});
+	} else if (action == "installer_plugin") {
+		plugin_job(true, false);
+	} else if (action == "plus_tard_plugin") {
+		updater::set_plugin_offered();
+	} else if (action == "relancer") {
+		g->restart_on_exit = true;
+		PostMessageW(g->hwnd, WM_CLOSE_APP, 0, 0);
+	} else if (action == "retrait_complet") {
+		plugin_job(false, true);
 	} else if (action == "page") {
 		const std::string name = m.value("nom", "");
 		g->page = name == "regarder" ? Page::Watch : name == "appareils" ? Page::Devices
@@ -671,6 +770,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		else if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU)
 			tray_menu();
 		return 0;
+	case WM_CLOSE_APP:
+		DestroyWindow(hwnd);
+		return 0;
 	case WM_TO_PAGE: {
 		std::unique_ptr<std::string> text((std::string *)lp);
 		if (g->web)
@@ -703,6 +805,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 							send_lists(false);
 						if (every5 && page == Page::Watch)
 							send_senders(true);
+						if (every5 && page == Page::Settings)
+							send_delivery();
 					});
 				}
 			}
@@ -741,6 +845,15 @@ int run_ui(bool hidden)
 		return 1;
 	}
 	app.worker = std::make_unique<Worker>();
+	{
+		const std::string just = updater::after_launch();
+		if (!just.empty())
+			app.update_text = "FLASH est à jour (" + just + ").";
+		else if (!updater::has_address())
+			app.update_text = "Mises à jour automatiques : pas encore d'adresse de publication.";
+	}
+	app.update_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	app.update_thread = std::thread(update_loop);
 
 	HINSTANCE inst = GetModuleHandleW(nullptr);
 	HICON icon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_FLASH));
@@ -789,12 +902,32 @@ int run_ui(bool hidden)
 		DispatchMessageW(&msg);
 	}
 
+	// Copie du plugin en cours (attente de l'élévation) : elle se termine avant le départ
+	for (int i = 0; i < 600 && app.plugin_busy; i++)
+		Sleep(100);
+	SetEvent(app.update_stop);
+	app.update_thread.join();
+	CloseHandle(app.update_stop);
 	app.live_stop = true;
 	app.live.join();
 	app.worker.reset();
 	app.engine.stop();
 	app.controller.Reset();
 	app.web.Reset();
+	// Moteur et interface arrêtés : plus rien ne réécrit les réglages
+	if (app.wipe_on_exit)
+		updater::remove_settings();
+	if (app.uninstall_on_exit)
+		updater::run_uninstaller();
+	if (app.restart_on_exit) {
+		std::wstring cmd = L"\"" + exe_path() + L"\" --attendre " + std::to_wstring(GetCurrentProcessId());
+		STARTUPINFOW si{sizeof(si)};
+		PROCESS_INFORMATION pi{};
+		if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+			CloseHandle(pi.hThread);
+			CloseHandle(pi.hProcess);
+		}
+	}
 	g = nullptr;
 	CoUninitialize();
 	CloseHandle(single);

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(flash VERSION 0.2.0 LANGUAGES C CXX)
+project(flash VERSION 0.3.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "FLASH se compile en 64 bits uniquement")

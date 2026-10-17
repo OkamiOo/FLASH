@@ -4,6 +4,7 @@ add_executable(flash WIN32
   main.cpp
   obs_client.cpp
   ui.cpp
+  updater.cpp
   viewer.cpp
   flash.rc
 )

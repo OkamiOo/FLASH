@@ -25,10 +25,11 @@ add_library(flashcore STATIC
   src/srt_link.cpp
   src/ts_demux.cpp
   src/ts_mux.cpp
+  src/update.cpp
   ../third_party/monocypher/monocypher.c
 )
 
 target_include_directories(flashcore PUBLIC include PRIVATE ../third_party/monocypher)
-target_link_libraries(flashcore PUBLIC flash::srt Opus::opus d3d11 dxgi dwmapi ws2_32 winmm avrt mmdevapi windowsapp mfplat mfuuid strmiids iphlpapi crypt32 bcrypt windowscodecs)
+target_link_libraries(flashcore PUBLIC flash::srt Opus::opus d3d11 dxgi dwmapi ws2_32 winmm avrt mmdevapi windowsapp mfplat mfuuid strmiids iphlpapi crypt32 bcrypt winhttp windowscodecs)
 # C++/WinRT ne garde pas l'emplacement des erreurs dans le source (aucun chemin dans les binaires)
 target_compile_definitions(flashcore PUBLIC WINRT_NO_SOURCE_LOCATION)

@@ -874,3 +874,141 @@ tirée au hasard à chaque essai).
 - Anciens réglages : un `reglages.json` sans `trame_son` avec 20 ms (l'ancien câble) passe à
   10 ms et 5 ms ; une source OBS réglée à 20 ms passe à 10 ms.
 - Ligne de commande : `--latence` vaut 10 par défaut, `--trame-son 5|10` vaut 5.
+
+## 19. Livraison 0.3.0 : édition portable, édition installable, mises à jour signées
+
+On garde le C++ : le travail lourd est sur la carte graphique, la latence vient de SRT, d'Opus
+et d'OBS, et la mémoire surtout du pilote NVIDIA (§ 17). Ce qui change, c'est la livraison.
+
+### Le dossier de FLASH
+
+Le même dossier sert aux deux éditions : `flash.exe`, `srt.dll`, le runtime Visual C++ dont
+`srt.dll` a besoin, `licences\`, `LISEZMOI.txt`, et une copie du plugin pour OBS dans
+`plugin-obs\` (`bin\64bit\flash-obs.dll`, `data\locale\`). `build.ps1 -Portable` le prépare dans
+`dist\` avec son zip ; `-Installeur` l'emballe.
+
+- Édition portable : le zip. Rien n'est écrit à côté de l'exe à part les mises à jour.
+- Édition installable : Inno Setup, pour l'utilisateur seul (`%LOCALAPPDATA%\Programs\FLASH`,
+  `PrivilegesRequired=lowest`) : pas d'élévation à l'installation, ni aux mises à jour. Plus de
+  règle de pare-feu écrite (il faut être administrateur) : Windows pose sa question à la
+  première écoute, et l'appli le dit en une phrase. Une ancienne installation pour tous les
+  utilisateurs (0.1, 0.2) est détectée : l'installeur propose de la désinstaller d'abord.
+
+### Plugin pour OBS
+
+Il vit dans `%ProgramData%\obs-studio\plugins\flash-obs` (le nom du dossier doit être celui de
+la DLL pour qu'OBS le charge). Au premier lancement, une fenêtre propose de l'installer ;
+Réglages le montre ensuite (absent, à jour, autre version) avec un bouton.
+
+Droits vérifiés sur le PC de jeu : les utilisateurs peuvent créer des fichiers dans
+`ProgramData\obs-studio\plugins` sans élévation. Un dossier `flash-obs` créé par l'appli reste
+donc modifiable par l'utilisateur, sans UAC. Celui posé par l'ancien installeur appartient aux
+administrateurs. L'appli copie donc d'abord directement, et ne demande l'élévation que si
+Windows refuse : le même `flash.exe` relancé en administrateur (`--plugin installer` ou
+`retirer`), qui ne fait que ça. OBS doit être fermé (il garde la DLL ouverte) : l'appli le
+dit, sans jamais le fermer.
+
+### Mises à jour automatiques
+
+Même principe que SWIFT, clé propre à FLASH :
+
+- Manifeste « FLASH-MAJ 1 » : version, notes, puis une ligne par fichier (taille, SHA-256,
+  chemin relatif ; « / » permis pour `plugin-obs`, ni lecteur, ni « .. », ni dossier caché).
+- Signature Ed25519 (RFC 8032) du manifeste, vérifiée avec la clé publique écrite dans
+  `app/updater.cpp`. Ed25519 est fait avec les fonctions de bas niveau de Monocypher (déjà dans
+  le dépôt) et le SHA-512 de Windows : l'outil `signer essai` le vérifie sur les vecteurs 1 à
+  3 de la RFC 8032.
+- La clé privée est dans `%USERPROFILE%\.flash-cle\flash-maj.cle`, hors de tout dépôt, dossier
+  réservé à l'utilisateur. `signer cle` la crée et n'affiche que la clé publique ;
+  `signer manifeste <dossier> <version> <clé>` signe une publication.
+- Au lancement de l'interface (5 s après) puis chaque jour : manifeste et signature
+  téléchargés (WinHTTP, HTTPS seulement, sauf vers ce PC pour les essais). Une version plus
+  récente : seuls les fichiers dont l'empreinte diffère sont téléchargés dans `maj\`, vérifiés,
+  puis les fichiers en service passent en `.ancien` (Windows permet de renommer un exe lancé)
+  et les nouveaux prennent leur place. Le nouvel exe doit démarrer (`flash.exe --verifier-maj`)
+  sinon tout revient comme avant. Réglages affiche « FLASH x.y.z est prêt » et un bouton
+  « Relancer FLASH » (la nouvelle instance attend la fin de l'ancienne).
+- Plugin : ses fichiers sont mis à jour dans `plugin-obs\` ; Réglages montre alors « une autre
+  version est installée » et propose la mise à jour, OBS fermé, avec l'élévation seulement si
+  elle est nécessaire.
+- Adresses de publication : aucune pour l'instant, l'hébergement reste à choisir.
+  `FLASH_MAJ_URL` en donne une pour les essais.
+
+### Retrait complet
+
+Réglages, « Tout retirer » : le plugin, le lancement avec Windows, `%APPDATA%\FLASH` (réglages
+et appairages), `%LOCALAPPDATA%\FLASH` (cache de l'interface) et les appairages du plugin
+(`plugin_config\flash-obs`), effacés une fois le moteur et l'interface arrêtés. L'édition
+installée lance ensuite son désinstalleur ; la portable dit de supprimer le dossier.
+
+### Essais
+
+- Ed25519 : vecteurs 1 à 3 de la RFC 8032 justes (clé, signature, vérification), signature
+  altérée refusée.
+- Mises à jour, copie de l'édition portable et faux serveur local :
+  - 0.3.1 : seuls `LISEZMOI.txt` et `fr-FR.ini` téléchargés et remplacés (pas `flash.exe`,
+    inchangé), copie identique à la publication ;
+  - fichier changé après la signature : « LISEZMOI.txt ne correspond pas au manifeste »,
+    rien touché ;
+  - signature fausse : « signature invalide : mise à jour refusée », rien touché ;
+  - nouvel exe cassé mais bien signé : « la nouvelle version ne démarre pas », l'ancien
+    `flash.exe` remis.
+- Plugin, vers un dossier d'essai (`FLASH_DOSSIER_PLUGIN`) : copie identique à la source,
+  retrait par `--plugin-retrait` ; les restes `.ancien` d'une mise à jour ne sont plus copiés.
+- Interface rendue par Chrome sans fenêtre avec des données simulées : carte « FLASH et OBS »
+  des réglages, fenêtre du premier lancement, page étroite à 125 %.
+- Tailles : dossier 3,7 Mo, zip 1,7 Mo, installeur 3,1 Mo.
+
+Pas encore vérifié : l'interface réelle (la fenêtre du premier lancement, la relance après une
+mise à jour, « Tout retirer ») et le chemin avec élévation, parce qu'il faut fermer le FLASH
+installé sur le PC de jeu et que la vraie copie du plugin remplacerait celui de l'OBS de
+stream ; le coût de l'interface WebView2 (mémoire, démarrage), pour la même raison.
+
+### Signature du code (Authenticode)
+
+`build.ps1` signe `flash.exe`, `flash-obs.dll` et l'installeur si `FLASH_CERTIFICAT` (empreinte
+du certificat) et `FLASH_HORODATAGE` (adresse d'horodatage) sont donnés ; sans elles, rien n'est
+signé. Le désinstalleur intégré par Inno Setup demandera en plus sa directive `SignTool`.
+
+Décision du 2026-10-17 : pas de signature pour l'instant. FLASH se fait connaître sans ; la
+signature pourra devenir intéressante plus tard. L'étape reste prête et inactive, le README
+explique l'avertissement de Windows et donne la vérification par SHA-256. Les mises à jour
+automatiques restent signées en Ed25519, ce qui ne dépend pas de Windows.
+
+Pour plus tard, conditions lues en octobre 2026 :
+
+- SignPath Foundation (signpath.org/terms.html) : gratuit pour les projets libres. Tout le
+  projet sous licence approuvée par l'OSI (la GPL-3.0 l'est), aucun composant propriétaire,
+  projet maintenu et déjà publié, « une réputation vérifiable ». Dépôt public, binaires produits
+  par une compilation automatique (CI) depuis ce dépôt. Trois rôles (auteurs, relecteurs,
+  approbateurs) : chaque version à signer est approuvée à la main, double authentification pour
+  tous. La page du projet doit publier une « Code signing policy » qui nomme le service et
+  SignPath Foundation comme éditeur du certificat (mention obligatoire), avec une politique de
+  confidentialité. Le certificat est au nom de SignPath Foundation, pas de l'auteur : c'est
+  l'éditeur que Windows affiche.
+- Microsoft Artifact Signing (ex-Trusted Signing) : 9,99 $ par mois. Les particuliers doivent
+  être aux États-Unis ou au Canada ; une entreprise de l'Union européenne y a droit (preuves
+  d'existence légale). Donc fermé à un particulier en Europe.
+- Certum, certificat « Open Source Code Signing » (l'alternative payante) : environ 49 € par an
+  (dans le nuage) ou 69 € (carte), pour un particulier et un projet libre non commercial, après
+  vérification d'identité. Le nom légal de la personne apparaît dans les fenêtres de Windows.
+  Depuis février 2026, un certificat dure 459 jours au plus.
+
+Aucun certificat ne fait disparaître l'avertissement de SmartScreen tout de suite : la
+réputation se construit avec les lancements.
+
+### Licence : deux cas préparés, à trancher avant toute diffusion
+
+1. Tout FLASH sous GPL-3.0 ou plus récente : licence approuvée par l'OSI, dépôt public avec les
+   sources de l'appli et du plugin. C'est la seule voie qui ouvre plus tard la signature
+   gratuite de SignPath.
+2. Appli fermée, plugin sous GPL-2.0 ou plus récente (comme libobs, auquel il est lié). L'appli
+   et le plugin sont deux programmes séparés : ils ne se parlent que par le tube nommé et des
+   textures partagées, sans lien de l'un à l'autre, donc l'appli n'a pas à suivre la GPL. Le
+   plugin est diffusé avec ses sources complètes (`obs/` et la partie de `core/` qu'il compile).
+   Le code de `core/` appartient à l'auteur : il peut être publié sous GPL avec le plugin et
+   rester fermé dans l'appli. La signature SignPath est alors exclue.
+
+Dans les deux cas, chaque édition porte les licences de ses composants dans `licences\` (SRT
+sous MPL-2.0, dont il faut dire où trouver les sources, mbedTLS, Opus, Monocypher, nlohmann
+json, en-têtes NVENC, chargeur WebView2), et rien n'est publié avant ce choix.

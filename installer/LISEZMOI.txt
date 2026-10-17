@@ -1,0 +1,45 @@
+FLASH, édition portable
+=======================
+
+FLASH envoie les écrans, les fenêtres et les sons d'un PC vers un autre PC ou vers OBS Studio,
+avec très peu de latence, sur le réseau local.
+
+Démarrer
+--------
+1. Dézipper le dossier où vous voulez (Documents, Bureau, clé USB...).
+2. Lancer flash.exe.
+3. Au premier lancement, FLASH propose d'installer son plugin dans OBS Studio : il ajoute les
+   sources « FLASH vidéo » et « FLASH audio ». OBS doit être fermé ; Windows peut demander
+   l'autorisation. Le plugin s'installe aussi plus tard, depuis Réglages.
+
+Au premier envoi sur le réseau, Windows demande s'il faut autoriser FLASH : acceptez pour les
+réseaux privés (maison, studio). FLASH ne touche pas lui-même au pare-feu.
+
+Ce que FLASH écrit sur le PC
+----------------------------
+- Ses réglages et ses appairages : %APPDATA%\FLASH
+- Le cache de son interface : %LOCALAPPDATA%\FLASH
+- Le plugin pour OBS, si vous l'installez : %ProgramData%\obs-studio\plugins\flash-obs
+- Le lancement avec Windows, si vous l'activez dans Réglages
+Rien d'autre, et rien à côté de flash.exe à part les mises à jour.
+
+Mises à jour
+------------
+FLASH vérifie chaque jour s'il existe une nouvelle version. Chaque mise à jour est signée : FLASH
+refuse tout fichier dont la signature ou l'empreinte ne correspond pas. Seuls les fichiers qui
+ont changé sont téléchargés, et la nouvelle version est essayée avant d'être gardée. Le plugin
+d'OBS se met à jour depuis Réglages, OBS fermé.
+
+Tout retirer
+------------
+Réglages, « Tout retirer » : le plugin d'OBS, le lancement avec Windows et les réglages sont
+effacés. Il ne reste qu'à supprimer le dossier de FLASH.
+
+Avertissement de Windows
+------------------------
+FLASH n'est pas signé avec un certificat de signature de code (un certificat classique coûte
+plus de 100 euros par an). Au premier lancement, Windows peut afficher « Windows a protégé
+votre ordinateur » : cliquez sur « Informations complémentaires », puis « Exécuter quand même ».
+L'avertissement disparaît quand assez de personnes ont lancé la même version.
+
+Licences des composants : dossier licences.

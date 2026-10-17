@@ -44,7 +44,7 @@ public:
 struct VideoOptions {
 	uint32_t fps = 60;
 	uint32_t kbps = 25000;
-	Codec codec = Codec::H264;
+	Codec codec = Codec::H264;    // format voulu ; envoyé seulement si l'encodeur et tous les récepteurs le gèrent
 	std::string encoder = "auto"; // "auto", "nvenc", "mf" ou "logiciel"
 };
 
@@ -89,6 +89,13 @@ public:
 	// Débit, format ou encodeur : les encodeurs vidéo sont refaits, les captures continuent
 	void set_video_options(const VideoOptions &video);
 
+	// Formats vidéo : ceux que l'encodeur de ce PC sait produire, ceux qui sont possibles
+	// (encodeur et tous les récepteurs connectés), et celui qui part. Le format voulu part s'il
+	// est possible ; sinon H.264, et le format voulu revient dès qu'il le redevient.
+	uint8_t encoder_formats() const { return encoder_formats_.load(); }
+	uint8_t possible_formats() const;
+	Codec video_codec() const { return codec_.load(); }
+
 	size_t client_count() const;
 	std::vector<TrackStats> stats(); // remet les compteurs à zéro
 	// Liste JSON des pistes (pid, type, nom), pour les métadonnées et l'annonce de découverte
@@ -109,6 +116,9 @@ private:
 	void on_video(VideoTrack &t, ID3D11Texture2D *nv12, uint64_t capture_ns);
 	void encode_video(VideoTrack &t, ID3D11Texture2D *nv12, uint64_t capture_ns, bool repeat = false);
 	bool open_encoder(VideoTrack &t);
+	Codec choose_codec() const; // tracks_ tenu
+	void update_codec();
+	void reopen_encoders(); // tracks_ tenu en écriture
 	void on_audio(AudioTrack &t, const float *samples, uint32_t frames, uint64_t first_ns);
 	void on_message(int client, const uint8_t *data, size_t size);
 	void publish_tracks(); // tracks_ tenu en écriture
@@ -131,6 +141,8 @@ private:
 	std::mutex reports_mutex_;
 	std::map<int, std::pair<uint64_t, double>> reports_; // client -> (heure, ms de l'arrivée à l'affichage)
 	std::atomic<uint64_t> send_lag_ns_{0}; // de la capture à l'envoi, moyenne glissante
+	std::atomic<uint8_t> encoder_formats_{0};
+	std::atomic<Codec> codec_{Codec::H264}; // format envoyé
 
 	std::atomic<bool> running_{false};
 	std::thread housekeeping_;

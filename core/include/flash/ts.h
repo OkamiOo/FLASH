@@ -13,10 +13,37 @@
 // - Un PID de PCR dédié, émis en continu, pour qu'un envoi sans vidéo garde une horloge.
 // - Le dernier paquet de chaque PES vidéo porte un marqueur dans les données privées du
 //   champ d'adaptation : le récepteur livre l'image tout de suite, sans attendre la suivante.
+// L'AV1 n'a pas de stream_type à lui : PES privé (0x06) avec un descripteur d'enregistrement
+// « AV01 », une unité temporelle (suite d'OBU avec leur taille) par PES.
 
 namespace flash {
 
-enum class Codec : uint8_t { H264 = 1, HEVC = 2, Opus = 3, Meta = 4 };
+enum class Codec : uint8_t { H264 = 1, HEVC = 2, Opus = 3, Meta = 4, AV1 = 5 };
+
+inline bool is_video(Codec c)
+{
+	return c == Codec::H264 || c == Codec::HEVC || c == Codec::AV1;
+}
+
+// Formats vidéo qu'un encodeur ou un décodeur gère, en bits : c'est aussi ce que chaque
+// récepteur annonce à l'émetteur par la voie de retour.
+namespace formats {
+constexpr uint8_t kH264 = 0x01;
+constexpr uint8_t kHEVC = 0x02;
+constexpr uint8_t kAV1 = 0x04;
+// Récepteur d'avant l'échange des formats : il ne savait décoder que ces deux-là
+constexpr uint8_t kLegacy = kH264 | kHEVC;
+} // namespace formats
+
+inline uint8_t format_bit(Codec c)
+{
+	return c == Codec::H264 ? formats::kH264 : c == Codec::HEVC ? formats::kHEVC : c == Codec::AV1 ? formats::kAV1 : 0;
+}
+
+inline const char *codec_name(Codec c)
+{
+	return c == Codec::HEVC ? "HEVC" : c == Codec::AV1 ? "AV1" : "H.264";
+}
 
 struct Track {
 	uint16_t pid = 0;
@@ -115,11 +142,13 @@ private:
 	};
 
 	void packet(const uint8_t *p);
-	void section(uint16_t pid, const uint8_t *data, size_t size);
+	void section_data(uint16_t pid, bool pusi, const uint8_t *data, size_t size);
+	void section(uint16_t pid, const uint8_t *s, size_t size);
 	void finish(uint16_t pid, PidState &st);
 
 	std::vector<PidState> pids_ = std::vector<PidState>(0x2000);
 	uint16_t pmt_pid_ = 0;
+	uint16_t section_pid_ = 0xFFFF;
 	std::vector<uint8_t> section_buf_;
 	std::vector<TsStream> streams_;
 };

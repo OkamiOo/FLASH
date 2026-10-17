@@ -173,8 +173,11 @@ void Receiver::start(const SrtOptions &options, OnStreams on_streams, OnPacket o
 			demux_.reset();
 			streams_.clear();
 			have_pts_ = false;
-			if (connected)
+			if (connected) {
+				const uint8_t formats[2] = {control::kFormats, formats_};
+				client_.send(formats, sizeof(formats));
 				send_subscription();
+			}
 			if (on_state_)
 				on_state_(connected);
 		});

@@ -30,6 +30,10 @@ public:
 	void set_sources(std::vector<obs_source_t *> sources);
 	flash::Codec codec() const { return codec_; }
 
+	// Formats que ce plugin décode (annoncés à l'émetteur) : H.264 et HEVC toujours, AV1 si
+	// la carte graphique le décode
+	static uint8_t formats();
+
 private:
 	struct Packet {
 		uint64_t pts_ns;

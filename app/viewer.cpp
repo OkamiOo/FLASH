@@ -47,13 +47,9 @@ constexpr size_t kMaxQueue = 30;          // au-delà d'une demi-seconde de reta
 constexpr size_t kMaxReady = 8;           // images décodées en attente de présentation
 constexpr uint64_t kGuardNs = 1'500'000;  // marge avec le balayage de l'écran
 constexpr uint64_t kWarmupFrames = 30;
+constexpr uint64_t kStallNs = 1'000'000'000ULL; // décodeur sans image pendant ce temps : refait
 constexpr UINT WM_VIEWER_DESTROY = WM_APP + 10;
 constexpr wchar_t kClass[] = L"FlashVisionneuse";
-
-bool is_video(Codec c)
-{
-	return c == Codec::H264 || c == Codec::HEVC;
-}
 
 // Le son de toutes les pistes, rangé par heure de l'émetteur : la case d'un échantillon est
 // son index (48 000 par seconde) modulo la taille de l'anneau. Chaque case garde l'index qu'elle
@@ -239,10 +235,13 @@ struct Viewer::Impl {
 	std::deque<Packet> queue_;
 	CadenceSmoother cadence_;
 	uint64_t decoded_ = 0;
+	uint64_t matched_ = 0; // images sorties du décodeur et reconnues (fil de décodage)
 	ComPtr<ID3D11Texture2D> probe_; // mesure : copie lisible de l'image
 	std::mutex info_mutex_;
 	std::string decoder_name_;
 	std::string error_;
+	std::string note_; // format choisi par l'émetteur que ce PC ne décode pas
+	uint8_t formats_ = 0, installed_ = 0;
 
 	// Images prêtes
 	struct Slot {
@@ -341,6 +340,9 @@ Viewer::Impl::Impl(const ViewerOptions &options) : o(options)
 		return ok;
 	};
 	local_ = srt.address == "127.0.0.1";
+	// L'émetteur n'envoie que des formats que Windows sait décoder ici
+	formats_ = device_ ? mf_decoder_formats(device_.Get(), &installed_) : formats::kH264;
+	receiver_.set_formats(formats_);
 	receiver_.start(
 		srt, [this](const std::vector<TsStream> &s) { on_streams(s); }, [this](const MediaPacket &p) { on_packet(p); },
 		[this](bool connected) { on_state(connected); });
@@ -436,6 +438,24 @@ void Viewer::Impl::on_meta(std::span<const uint8_t> data)
 			names_[(uint16_t)t.value("pid", 0)] = t.value("nom", "");
 	}
 	names_known_ = true;
+
+	// Format choisi par l'émetteur que ce PC ne décode pas : l'image arrive en H.264, on dit pourquoi
+	const std::string chosen = j.value("format_choisi", "");
+	std::string note;
+	if (chosen == "AV1" && !(formats_ & formats::kAV1))
+		note = installed_ & formats::kAV1
+			       ? "L'émetteur a choisi l'AV1, que la carte graphique de ce PC ne décode pas : l'image arrive en H.264"
+			       : "L'émetteur a choisi l'AV1 : pour le recevoir, installez l'extension AV1 de Windows "
+				 "(« AV1 Video Extension », Microsoft Store). En attendant, l'image arrive en H.264";
+	else if (chosen == "HEVC" && !(formats_ & formats::kHEVC))
+		note = "L'émetteur a choisi le HEVC : pour le recevoir, installez l'extension HEVC de Windows. En "
+		       "attendant, l'image arrive en H.264";
+	{
+		std::lock_guard lock(info_mutex_);
+		if (note != note_ && !note.empty())
+			FLOG_W("%s", note.c_str());
+		note_ = note;
+	}
 	rebind();
 }
 
@@ -577,6 +597,7 @@ void Viewer::Impl::decode_loop()
 	bool failed = false;
 	bool waiting_keyframe = true;
 	std::deque<Info> infos;
+	uint64_t progress = 0; // dernière image sortie du décodeur (ou image clé donnée)
 
 	for (;;) {
 		Packet p;
@@ -600,6 +621,7 @@ void Viewer::Impl::decode_loop()
 			cadence_ = CadenceSmoother();
 			decoded_ = 0;
 			infos.clear();
+			progress = now_ns();
 			std::lock_guard lock(info_mutex_);
 			if (decoder) {
 				decoder_name_ = std::string(decoder->name()) + (decoder->hardware() ? "" : " (processeur)");
@@ -607,7 +629,10 @@ void Viewer::Impl::decode_loop()
 			} else {
 				error_ = codec == Codec::HEVC ? "Ce PC ne sait pas décoder le HEVC. Installez l'extension HEVC de "
 								"Windows, ou passez l'émetteur en H.264."
-							      : "Aucun décodeur H.264 sur ce PC.";
+					 : codec == Codec::AV1 ? "Ce PC ne sait pas décoder l'AV1. Installez l'extension AV1 de "
+								 "Windows (« AV1 Video Extension », Microsoft Store), ou passez "
+								 "l'émetteur en H.264."
+							       : "Aucun décodeur H.264 sur ce PC.";
 				FLOG_E("%s", error_.c_str());
 			}
 		}
@@ -628,9 +653,25 @@ void Viewer::Impl::decode_loop()
 		infos.push_back({time, p.pts, p.arrival});
 		if (infos.size() > 16)
 			infos.pop_front();
-		if (!decoder->decode(p.data.data(), p.data.size(), time,
-				     [&](const DecodedFrame &f) { on_frame(f, infos); }))
+		const uint64_t before = matched_;
+		const bool ok = decoder->decode(p.data.data(), p.data.size(), time,
+						[&](const DecodedFrame &f) { on_frame(f, infos); });
+		const uint64_t now = now_ns();
+		if (matched_ != before || p.keyframe)
+			progress = now;
+
+		// Un décodeur qui refuse une image ou ne sort plus rien (référence perdue : le
+		// décodeur AV1 de Windows ne s'en remet pas seul) est refait, et l'image repart de la
+		// prochaine image clé
+		if (!ok || now - progress > kStallNs) {
+			FLOG_W("Visionneuse : %s, décodeur refait", ok ? "plus aucune image décodée" : "image refusée par le décodeur");
+			decoder = create_mf_decoder(device_.Get(), codec);
+			failed = !decoder;
+			waiting_keyframe = true;
+			infos.clear();
+			progress = now;
 			request_keyframe();
+		}
 	}
 
 	decoder.reset();
@@ -705,6 +746,7 @@ void Viewer::Impl::on_frame(const DecodedFrame &f, std::deque<Info> &infos)
 	}
 	if (!found)
 		return;
+	matched_++;
 
 	D3D11_TEXTURE2D_DESC d;
 	f.texture->GetDesc(&d);
@@ -1371,11 +1413,12 @@ json Viewer::Impl::status()
 	const uint64_t lat_sum = latency_sum_.exchange(0), lat_n = latency_n_.exchange(0);
 
 	json j;
-	std::string error, decoder;
+	std::string error, decoder, note;
 	{
 		std::lock_guard lock(info_mutex_);
 		error = error_;
 		decoder = decoder_name_;
+		note = note_;
 	}
 	std::string state;
 	if (!error.empty())
@@ -1388,6 +1431,7 @@ json Viewer::Impl::status()
 		state = shown ? "lecture" : "attente";
 	j["etat"] = state;
 	j["message"] = error;
+	j["remarque"] = note;
 	j["ips"] = secs > 0 ? shown / secs : 0;
 	j["sautees"] = dropped;
 	const SrtLinkStats st = receiver_.stats();

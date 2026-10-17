@@ -67,6 +67,7 @@ Réglages :
   --latence ms           latence SRT (20)
   --taille LxH           taille maximale envoyée (1920x1080)
   --hevc                 HEVC au lieu de H.264
+  --av1                  AV1 au lieu de H.264 (H.264 tant qu'un récepteur ne décode pas l'AV1)
   --encodeur auto|nvenc|mf|logiciel   encodeur vidéo (auto : NVENC, sinon Media Foundation)
   --sans-curseur         ne pas capturer le curseur
   --duree s              s'arrêter au bout de s secondes
@@ -142,7 +143,9 @@ bool parse_args(int argc, char **argv, Args &a)
 			if (std::sscanf(next().c_str(), "%ux%u", &a.settings.max_w, &a.settings.max_h) != 2)
 				return false;
 		} else if (arg == "--hevc")
-			a.settings.hevc = true;
+			a.settings.codec = Codec::HEVC;
+		else if (arg == "--av1")
+			a.settings.codec = Codec::AV1;
 		else if (arg == "--encodeur")
 			a.settings.encoder = next();
 		else if (arg == "--sans-curseur")
@@ -245,6 +248,8 @@ std::string view_line(const nlohmann::json &v)
 		line += ", " + std::to_string(v["sautees"].get<int>()) + " sautée(s)";
 	if (!v.value("message", "").empty())
 		line += " (" + v["message"].get<std::string>() + ")";
+	if (!v.value("remarque", "").empty())
+		line += " (" + v["remarque"].get<std::string>() + ")";
 	return line;
 }
 
@@ -288,6 +293,8 @@ int run_console(const Args &args)
 		report += 5'000'000'000ULL;
 		const nlohmann::json st = engine.status();
 		std::string line = std::to_string(st["connectes"].get<size_t>()) + " récepteur(s)";
+		if (sending)
+			line += ", vidéo en " + st["format"].get<std::string>();
 		for (const auto &v : st["vues"])
 			line += view_line(v);
 		for (const auto &t : st["pistes"]) {
@@ -295,9 +302,10 @@ int run_console(const Args &args)
 			if (!t["active"].get<bool>())
 				std::snprintf(buf, sizeof(buf), " | %s : en pause", t["nom"].get<std::string>().c_str());
 			else if (t["video"].get<bool>())
-				std::snprintf(buf, sizeof(buf), " | %s : %.0f i/s, %.1f Mb/s, encodage %.2f ms",
+				std::snprintf(buf, sizeof(buf), " | %s : %.0f i/s, %.1f Mb/s, encodage %.2f ms, %d image(s) clé(s)",
 					      t["nom"].get<std::string>().c_str(), t["ips"].get<double>(),
-					      t["kbps"].get<double>() / 1000, t["encodage_ms"].get<double>());
+					      t["kbps"].get<double>() / 1000, t["encodage_ms"].get<double>(),
+					      t.value("cles", 0));
 			else
 				std::snprintf(buf, sizeof(buf), " | %s : %.0f kb/s", t["nom"].get<std::string>().c_str(),
 					      t["kbps"].get<double>());

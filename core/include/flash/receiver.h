@@ -18,6 +18,9 @@ constexpr uint8_t kKeyframeRequest = 0x01; // suivi du PID sur 2 octets
 constexpr uint8_t kSubscribe = 0x02;       // suivi des PID voulus, 2 octets chacun (aucun = tous)
 // Suivi de 4 octets : latence SRT négociée + temps de l'arrivée à l'affichage, en µs, chaque seconde
 constexpr uint8_t kLatencyReport = 0x03;
+// Suivi d'un octet : formats vidéo que le récepteur sait décoder (bits de flash::formats).
+// Envoyé dès la connexion ; un récepteur qui ne l'envoie pas ne connaît que H.264 et HEVC.
+constexpr uint8_t kFormats = 0x04;
 }
 
 // Ramène l'horloge de l'émetteur sur celle du récepteur. Un seul modèle par émetteur :
@@ -86,6 +89,9 @@ public:
 
 	~Receiver();
 
+	// Formats vidéo décodables ici, annoncés à l'émetteur à chaque connexion : il n'encode
+	// dans un format que si tous ses récepteurs le décodent. À donner avant start().
+	void set_formats(uint8_t formats) { formats_ = formats; }
 	void start(const SrtOptions &options, OnStreams on_streams, OnPacket on_packet, OnState on_state);
 	void stop();
 
@@ -111,6 +117,7 @@ private:
 
 	std::mutex sub_mutex_;
 	std::vector<uint16_t> subscription_;
+	uint8_t formats_ = formats::kLegacy;
 	uint64_t arrival_ = 0;
 	uint64_t last_pts_ = 0;
 	bool have_pts_ = false;

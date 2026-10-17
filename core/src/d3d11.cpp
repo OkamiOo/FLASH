@@ -52,4 +52,33 @@ ComPtr<ID3D11Device> create_d3d11_device(std::string *adapter_name)
 	return device;
 }
 
+bool gpu_decodes(ID3D11Device *device, Codec codec)
+{
+	// Profils DXVA (d3d11.h), recopiés ici plutôt que d'instancier toutes les GUID de D3D11
+	static const GUID kH264 = {0x1b81be68, 0xa0c7, 0x11d3, {0xb9, 0x84, 0x00, 0xc0, 0x4f, 0x2e, 0x73, 0xc5}};
+	static const GUID kHevc = {0x5b11d51b, 0x2f4c, 0x4452, {0xbc, 0xc3, 0x09, 0xf2, 0xa1, 0x16, 0x0c, 0xc0}};
+	static const GUID kAv1 = {0xb8be4ccb, 0xcf53, 0x46ba, {0x8d, 0x59, 0xd6, 0xb8, 0xa6, 0xda, 0x5d, 0x2a}};
+	const GUID &wanted = codec == Codec::HEVC ? kHevc : codec == Codec::AV1 ? kAv1 : kH264;
+
+	ComPtr<ID3D11Device> own;
+	if (!device) {
+		const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+		if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+					     levels, 2, D3D11_SDK_VERSION, &own, nullptr, nullptr)))
+			return false;
+		device = own.Get();
+	}
+	ComPtr<ID3D11VideoDevice> video;
+	if (FAILED(device->QueryInterface(IID_PPV_ARGS(&video))))
+		return false;
+	for (UINT i = 0, n = video->GetVideoDecoderProfileCount(); i < n; i++) {
+		GUID profile;
+		BOOL nv12 = FALSE;
+		if (SUCCEEDED(video->GetVideoDecoderProfile(i, &profile)) && profile == wanted &&
+		    SUCCEEDED(video->CheckVideoDecoderFormat(&profile, DXGI_FORMAT_NV12, &nv12)) && nv12)
+			return true;
+	}
+	return false;
+}
+
 } // namespace flash

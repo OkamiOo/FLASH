@@ -5,6 +5,7 @@
 #include <flash/log.h>
 #include <flash/measure.h>
 #include <flash/mire.h>
+#include <flash/video.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -100,9 +101,25 @@ void VideoTrack::decode_loop()
 	close_decoder();
 }
 
+uint8_t VideoTrack::formats()
+{
+	static const uint8_t value = [] {
+		uint8_t f = flash::formats::kH264 | flash::formats::kHEVC;
+		// Le seul décodeur AV1 logiciel du FFmpeg d'OBS (libaom) ne tient pas 60 i/s : l'AV1 se
+		// décode par la carte ou pas du tout
+		if (avcodec_find_decoder_by_name("av1") && flash::gpu_decodes(nullptr, flash::Codec::AV1))
+			f |= flash::formats::kAV1;
+		return f;
+	}();
+	return value;
+}
+
 bool VideoTrack::open_decoder()
 {
-	const AVCodec *codec = avcodec_find_decoder(codec_ == flash::Codec::HEVC ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264);
+	// Pour l'AV1, le décodeur « av1 » de FFmpeg, qui passe par la carte (d3d11va)
+	const AVCodec *codec = codec_ == flash::Codec::AV1
+				       ? avcodec_find_decoder_by_name("av1")
+				       : avcodec_find_decoder(codec_ == flash::Codec::HEVC ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264);
 	if (!codec)
 		return false;
 
@@ -110,6 +127,9 @@ bool VideoTrack::open_decoder()
 	if (av_hwdevice_ctx_create(&hw_device_, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) == 0) {
 		ctx_->hw_device_ctx = av_buffer_ref(hw_device_);
 		ctx_->get_format = pick_hw_format;
+	} else if (codec_ == flash::Codec::AV1) {
+		FLOG_E("Décodage AV1 impossible : la carte graphique n'est pas disponible");
+		return false;
 	} else {
 		FLOG_W("Décodage matériel indisponible, décodage par le processeur");
 	}

@@ -1,6 +1,7 @@
 #include "flash/ts.h"
 #include "flash/clock.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace flash {
@@ -17,7 +18,7 @@ uint8_t stream_type_of(Codec codec)
 	case Codec::HEVC:
 		return 0x24;
 	default:
-		return 0x06; // PES privé (Opus, métadonnées)
+		return 0x06; // PES privé (Opus, AV1, métadonnées)
 	}
 }
 
@@ -92,9 +93,10 @@ void TsMuxer::write_tables()
 
 	for (const Track &t : tracks_) {
 		std::vector<uint8_t> desc;
-		if (t.codec == Codec::Opus) {
+		if (t.codec == Codec::Opus)
 			desc = {0x05, 4, 'O', 'p', 'u', 's', 0x7F, 2, 0x80, t.channels};
-		}
+		else if (t.codec == Codec::AV1)
+			desc = {0x05, 4, 'A', 'V', '0', '1'};
 		add_stream(stream_type_of(t.codec), t.pid, desc);
 	}
 	add_stream(0x06, ts::kPidMeta, {0x05, 4, 'F', 'L', 'S', 'H'});
@@ -135,7 +137,12 @@ void TsMuxer::write_pcr(uint64_t now)
 void TsMuxer::write_video(uint16_t pid, uint64_t pts_ns, const uint8_t *data, size_t size, bool keyframe)
 {
 	std::lock_guard lock(mutex_);
-	write_pes(pid, 0xE0, pts_ns, {}, {data, size}, keyframe, true);
+	// L'AV1, en PES privé, prend le stream_id des données privées
+	uint8_t stream_id = 0xE0;
+	for (const Track &t : tracks_)
+		if (t.pid == pid && t.codec == Codec::AV1)
+			stream_id = 0xBD;
+	write_pes(pid, stream_id, pts_ns, {}, {data, size}, keyframe, true);
 	flush();
 }
 
@@ -177,7 +184,7 @@ void TsMuxer::write_pes(uint16_t pid, uint8_t stream_id, uint64_t pts_ns, std::s
 	p[1] = 0x00;
 	p[2] = 0x01;
 	p[3] = stream_id;
-	const size_t len = body <= 0xFFFF ? body : 0; // 0 = longueur non bornée (vidéo seulement)
+	const size_t len = body <= 0xFFFF ? body : 0; // 0 = longueur non bornée (image vidéo, close par le marqueur)
 	p[4] = (uint8_t)(len >> 8);
 	p[5] = (uint8_t)len;
 	p[6] = 0x84; // data_alignment_indicator
@@ -214,19 +221,26 @@ void TsMuxer::write_pes(uint16_t pid, uint8_t stream_id, uint64_t pts_ns, std::s
 	}
 }
 
+// Une table qui ne tient pas dans un paquet (beaucoup de pistes) continue dans les suivants
 void TsMuxer::write_section(uint16_t pid, const std::vector<uint8_t> &section)
 {
-	uint8_t p[ts::kPacket];
-	p[0] = 0x47;
-	p[1] = (uint8_t)(0x40 | (pid >> 8));
-	p[2] = (uint8_t)pid;
-	p[3] = (uint8_t)(0x10 | (cc_[pid] & 0x0F));
-	cc_[pid] = (uint8_t)((cc_[pid] + 1) & 0x0F);
-	p[4] = 0x00; // pointer_field
-	const size_t n = section.size() < ts::kPacket - 5 ? section.size() : ts::kPacket - 5;
-	std::memcpy(p + 5, section.data(), n);
-	std::memset(p + 5 + n, 0xFF, ts::kPacket - 5 - n);
-	push_packet(p);
+	size_t pos = 0;
+	for (bool first = true; first || pos < section.size(); first = false) {
+		uint8_t p[ts::kPacket];
+		p[0] = 0x47;
+		p[1] = (uint8_t)((first ? 0x40 : 0x00) | (pid >> 8));
+		p[2] = (uint8_t)pid;
+		p[3] = (uint8_t)(0x10 | (cc_[pid] & 0x0F));
+		cc_[pid] = (uint8_t)((cc_[pid] + 1) & 0x0F);
+		size_t at = 4;
+		if (first)
+			p[at++] = 0x00; // pointer_field
+		const size_t n = std::min(section.size() - pos, ts::kPacket - at);
+		std::memcpy(p + at, section.data() + pos, n);
+		std::memset(p + at + n, 0xFF, ts::kPacket - at - n);
+		push_packet(p);
+		pos += n;
+	}
 }
 
 void TsMuxer::emit_packet(uint16_t pid, bool pusi, uint8_t af_flags, const uint8_t *priv, size_t priv_size,

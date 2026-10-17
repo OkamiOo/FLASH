@@ -1,4 +1,4 @@
-// Décodage H.264 et HEVC par Media Foundation : le décodeur fourni par Windows, accéléré par
+// Décodage H.264, HEVC et AV1 par Media Foundation : le décodeur fourni par Windows, accéléré par
 // la carte graphique (DXVA) quand il accepte nos textures, sinon par le processeur.
 
 #include "flash/inputs.h"
@@ -18,6 +18,13 @@
 namespace flash {
 
 namespace {
+
+constexpr UINT32 kEnumFlags = MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_LOCALMFT | MFT_ENUM_FLAG_SORTANDFILTER;
+
+GUID subtype_of(Codec codec)
+{
+	return codec == Codec::HEVC ? MFVideoFormat_HEVC : codec == Codec::AV1 ? MFVideoFormat_AV1 : MFVideoFormat_H264;
+}
 
 class MfDecoder final : public VideoDecoder {
 public:
@@ -63,13 +70,10 @@ bool MfDecoder::open(ID3D11Device *device, Codec codec, bool hardware)
 		return false;
 	started_ = true;
 
-	MFT_REGISTER_TYPE_INFO in{MFMediaType_Video, codec == Codec::HEVC ? MFVideoFormat_HEVC : MFVideoFormat_H264};
+	MFT_REGISTER_TYPE_INFO in{MFMediaType_Video, subtype_of(codec)};
 	IMFActivate **acts = nullptr;
 	UINT32 count = 0;
-	if (FAILED(MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER,
-			     MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_LOCALMFT | MFT_ENUM_FLAG_SORTANDFILTER, &in, nullptr, &acts,
-			     &count)) ||
-	    !count)
+	if (FAILED(MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER, kEnumFlags, &in, nullptr, &acts, &count)) || !count)
 		return false;
 	HRESULT hr = acts[0]->ActivateObject(IID_PPV_ARGS(&mft_));
 	wchar_t *friendly = nullptr;
@@ -121,8 +125,7 @@ bool MfDecoder::open(ID3D11Device *device, Codec codec, bool hardware)
 
 	mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
 	mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-	FLOG_I("Décodeur %s : %s%s", codec == Codec::HEVC ? "HEVC" : "H.264", name_.c_str(),
-	       hardware ? " (carte graphique)" : " (processeur)");
+	FLOG_I("Décodeur %s : %s%s", codec_name(codec), name_.c_str(), hardware ? " (carte graphique)" : " (processeur)");
 	return true;
 }
 
@@ -300,6 +303,32 @@ std::unique_ptr<VideoDecoder> create_mf_decoder(ID3D11Device *device, Codec code
 			return dec;
 	}
 	return nullptr;
+}
+
+uint8_t mf_decoder_formats(ID3D11Device *device, uint8_t *installed)
+{
+	const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	uint8_t out = 0;
+	if (installed)
+		*installed = 0;
+	for (Codec c : {Codec::H264, Codec::HEVC, Codec::AV1}) {
+		MFT_REGISTER_TYPE_INFO in{MFMediaType_Video, subtype_of(c)};
+		IMFActivate **acts = nullptr;
+		UINT32 count = 0;
+		if (SUCCEEDED(MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER, kEnumFlags, &in, nullptr, &acts, &count))) {
+			for (UINT32 i = 0; i < count; i++)
+				acts[i]->Release();
+			CoTaskMemFree(acts);
+		}
+		if (count && installed)
+			*installed |= format_bit(c);
+		// L'AV1 par le processeur ne tient pas 60 images par seconde sans charger le PC
+		if (count && (c != Codec::AV1 || gpu_decodes(device, c)))
+			out |= format_bit(c);
+	}
+	if (SUCCEEDED(com))
+		CoUninitialize();
+	return out;
 }
 
 } // namespace flash

@@ -15,10 +15,7 @@ namespace {
 std::mutex g_registry_mutex;
 std::map<std::string, std::weak_ptr<Connection>> g_registry;
 
-bool is_video(flash::Codec c)
-{
-	return c == flash::Codec::H264 || c == flash::Codec::HEVC;
-}
+using flash::is_video;
 } // namespace
 
 std::shared_ptr<Connection> Connection::get(const Target &target)
@@ -41,6 +38,7 @@ Connection::Connection(const Target &target) : target_(target), label_(target.ke
 	options.port = target_.port;
 	options.latency_ms = target_.latency_ms;
 	options.refresh = [this](flash::SrtOptions &o) { return refresh(o); };
+	receiver_.set_formats(VideoTrack::formats());
 	receiver_.start(
 		options, [this](const std::vector<flash::TsStream> &streams) { on_streams(streams); },
 		[this](const flash::MediaPacket &pkt) { on_packet(pkt); }, [this](bool connected) { on_state(connected); });
@@ -203,6 +201,8 @@ void Connection::on_meta(std::span<const uint8_t> data)
 			t.value("nom", "?") + " »";
 	}
 	FLOG_I("Émetteur « %s » : %s", j.value("nom", "?").c_str(), line.c_str());
+	if (j.value("format_choisi", "") == "AV1" && !(VideoTrack::formats() & flash::formats::kAV1))
+		FLOG_W("L'émetteur a choisi l'AV1, que la carte graphique de ce PC ne décode pas : l'image arrive en H.264");
 	rebind();
 }
 

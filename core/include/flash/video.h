@@ -29,7 +29,7 @@ struct VideoEncoderConfig {
 };
 
 struct EncodedFrame {
-	std::vector<uint8_t> data; // Annex B, AUD en tête
+	std::vector<uint8_t> data; // H.264, HEVC : Annex B, AUD en tête ; AV1 : unité temporelle (OBU avec taille)
 	bool keyframe = false;
 };
 
@@ -49,6 +49,10 @@ std::unique_ptr<VideoEncoder> create_mf_encoder(ID3D11Device *device, const Vide
 // preference : "auto", "nvenc", "mf" ou "logiciel" (encodeur logiciel de Windows seul).
 std::unique_ptr<VideoEncoder> create_video_encoder(ID3D11Device *device, const VideoEncoderConfig &config,
 						   const std::string &preference = "auto");
+
+// Formats (bits de flash::formats) que ces encodeurs savent produire sur ce PC
+uint8_t nvenc_formats(ID3D11Device *device);
+uint8_t video_encoder_formats(ID3D11Device *device, const std::string &preference = "auto");
 
 // Image décodée : une texture NV12 du GPU (parfois une case d'un tableau de textures), valable
 // jusqu'au décodage suivant.
@@ -72,7 +76,14 @@ public:
 };
 
 // Décodeur de Windows (Media Foundation), par la carte graphique si possible, sinon par le
-// processeur. HEVC demande l'extension HEVC de Windows.
+// processeur. HEVC demande l'extension HEVC de Windows, AV1 l'extension AV1.
 std::unique_ptr<VideoDecoder> create_mf_decoder(ID3D11Device *device, Codec codec);
+// Formats que ce PC sait décoder par Media Foundation ; l'AV1 seulement si la carte le décode.
+// installed : formats dont Windows a le décodeur, que la carte suive ou non.
+uint8_t mf_decoder_formats(ID3D11Device *device, uint8_t *installed = nullptr);
+
+// La carte de ce périphérique décode-t-elle ce format elle-même (profil DXVA, sortie NV12) ?
+// Sans périphérique : la carte par défaut, celle que prend le décodeur d3d11va de FFmpeg.
+bool gpu_decodes(ID3D11Device *device, Codec codec);
 
 } // namespace flash

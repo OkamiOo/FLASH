@@ -32,6 +32,45 @@ void set_codec_value(ICodecAPI *api, const GUID &key, ULONG value)
 	api->SetValue(&key, &v);
 }
 
+GUID subtype_of(Codec codec)
+{
+	return codec == Codec::HEVC ? MFVideoFormat_HEVC : codec == Codec::AV1 ? MFVideoFormat_AV1 : MFVideoFormat_H264;
+}
+
+// Encodeurs de Windows qui prennent du NV12 et sortent ce format : matériels (ceux de la carte
+// qui porte notre périphérique D3D11) ou logiciels. À libérer avec release_all.
+std::vector<IMFActivate *> find_encoders(ID3D11Device *device, Codec codec, bool hardware)
+{
+	MFT_REGISTER_TYPE_INFO in{MFMediaType_Video, MFVideoFormat_NV12};
+	MFT_REGISTER_TYPE_INFO out{MFMediaType_Video, subtype_of(codec)};
+	ComPtr<IMFAttributes> filter;
+	if (hardware) {
+		ComPtr<IDXGIDevice> dxgi;
+		ComPtr<IDXGIAdapter> adapter;
+		DXGI_ADAPTER_DESC desc{};
+		if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&dxgi))) && SUCCEEDED(dxgi->GetAdapter(&adapter)) &&
+		    SUCCEEDED(adapter->GetDesc(&desc))) {
+			MFCreateAttributes(&filter, 1);
+			filter->SetBlob(MFT_ENUM_ADAPTER_LUID, (const UINT8 *)&desc.AdapterLuid, sizeof(desc.AdapterLuid));
+		}
+	}
+	IMFActivate **acts = nullptr;
+	UINT32 count = 0;
+	const UINT32 flags = (hardware ? MFT_ENUM_FLAG_HARDWARE : MFT_ENUM_FLAG_SYNCMFT) | MFT_ENUM_FLAG_SORTANDFILTER;
+	if (FAILED(MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, flags, &in, &out, filter.Get(), &acts, &count)))
+		return {};
+	std::vector<IMFActivate *> list(acts, acts + count);
+	CoTaskMemFree(acts);
+	return list;
+}
+
+void release_all(std::vector<IMFActivate *> &list)
+{
+	for (IMFActivate *a : list)
+		a->Release();
+	list.clear();
+}
+
 class MfEncoder final : public VideoEncoder {
 public:
 	~MfEncoder() override
@@ -81,25 +120,8 @@ bool MfEncoder::open(ID3D11Device *device, const VideoEncoderConfig &cfg, bool h
 		return false;
 	started_ = true;
 
-	MFT_REGISTER_TYPE_INFO in{MFMediaType_Video, MFVideoFormat_NV12};
-	MFT_REGISTER_TYPE_INFO out{MFMediaType_Video, cfg.codec == Codec::HEVC ? MFVideoFormat_HEVC : MFVideoFormat_H264};
-
-	// Encodeur matériel de la carte qui porte notre périphérique D3D11
-	ComPtr<IMFAttributes> filter;
-	if (hardware) {
-		ComPtr<IDXGIDevice> dxgi;
-		ComPtr<IDXGIAdapter> adapter;
-		DXGI_ADAPTER_DESC desc{};
-		if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&dxgi))) && SUCCEEDED(dxgi->GetAdapter(&adapter)) &&
-		    SUCCEEDED(adapter->GetDesc(&desc))) {
-			MFCreateAttributes(&filter, 1);
-			filter->SetBlob(MFT_ENUM_ADAPTER_LUID, (const UINT8 *)&desc.AdapterLuid, sizeof(desc.AdapterLuid));
-		}
-	}
-	IMFActivate **acts = nullptr;
-	UINT32 count = 0;
-	const UINT32 flags = (hardware ? MFT_ENUM_FLAG_HARDWARE : MFT_ENUM_FLAG_SYNCMFT) | MFT_ENUM_FLAG_SORTANDFILTER;
-	if (FAILED(MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, flags, &in, &out, filter.Get(), &acts, &count)) || !count)
+	std::vector<IMFActivate *> acts = find_encoders(device, cfg.codec, hardware);
+	if (acts.empty())
 		return false;
 	HRESULT hr = acts[0]->ActivateObject(IID_PPV_ARGS(&mft_));
 	wchar_t *friendly = nullptr;
@@ -108,9 +130,7 @@ bool MfEncoder::open(ID3D11Device *device, const VideoEncoderConfig &cfg, bool h
 		name_ = to_utf8(friendly);
 		CoTaskMemFree(friendly);
 	}
-	for (UINT32 i = 0; i < count; i++)
-		acts[i]->Release();
-	CoTaskMemFree(acts);
+	release_all(acts);
 	if (FAILED(hr))
 		return false;
 
@@ -149,7 +169,7 @@ bool MfEncoder::open(ID3D11Device *device, const VideoEncoderConfig &cfg, bool h
 	ComPtr<IMFMediaType> type;
 	MFCreateMediaType(&type);
 	type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-	type->SetGUID(MF_MT_SUBTYPE, out.guidSubtype);
+	type->SetGUID(MF_MT_SUBTYPE, subtype_of(cfg.codec));
 	type->SetUINT32(MF_MT_AVG_BITRATE, cfg.bitrate_kbps * 1000);
 	MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, cfg.width, cfg.height);
 	MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, cfg.fps_num, cfg.fps_den);
@@ -190,8 +210,8 @@ bool MfEncoder::open(ID3D11Device *device, const VideoEncoderConfig &cfg, bool h
 
 	mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
 	mft_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-	FLOG_I("%s prêt : %s %ux%u, %u kb/s%s", name_.c_str(), cfg.codec == Codec::HEVC ? "HEVC" : "H.264", cfg.width,
-	       cfg.height, cfg.bitrate_kbps, hardware ? "" : " (encodage par le processeur)");
+	FLOG_I("%s prêt : %s %ux%u, %u kb/s%s", name_.c_str(), codec_name(cfg.codec), cfg.width, cfg.height,
+	       cfg.bitrate_kbps, hardware ? "" : " (encodage par le processeur)");
 	return true;
 }
 
@@ -352,6 +372,30 @@ std::unique_ptr<VideoEncoder> create_video_encoder(ID3D11Device *device, const V
 			return nullptr;
 	}
 	return create_mf_encoder(device, config);
+}
+
+// Mêmes voies que create_video_encoder, dans le même ordre
+uint8_t video_encoder_formats(ID3D11Device *device, const std::string &preference)
+{
+	uint8_t out = 0;
+	if (preference == "auto" || preference == "nvenc")
+		out |= nvenc_formats(device);
+	if (preference == "nvenc")
+		return out;
+	if (FAILED(MFStartup(MF_VERSION, MFSTARTUP_LITE)))
+		return out;
+	for (Codec c : {Codec::H264, Codec::HEVC, Codec::AV1}) {
+		for (bool hardware : {true, false}) {
+			if (hardware && preference == "logiciel")
+				continue;
+			std::vector<IMFActivate *> acts = find_encoders(device, c, hardware);
+			if (!acts.empty())
+				out |= format_bit(c);
+			release_all(acts);
+		}
+	}
+	MFShutdown();
+	return out;
 }
 
 } // namespace flash

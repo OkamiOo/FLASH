@@ -28,12 +28,22 @@ struct SourceChoice {
 	bool operator==(const SourceChoice &o) const { return kind == o.kind && value == o.value; }
 };
 
+// Format vidéo tel que l'écrivent les réglages et la page : « h264 », « hevc », « av1 »
+inline const char *format_key(flash::Codec c)
+{
+	return c == flash::Codec::HEVC ? "hevc" : c == flash::Codec::AV1 ? "av1" : "h264";
+}
+inline flash::Codec format_from_key(const std::string &key)
+{
+	return key == "hevc" ? flash::Codec::HEVC : key == "av1" ? flash::Codec::AV1 : flash::Codec::H264;
+}
+
 struct EngineSettings {
 	std::string address = "0.0.0.0"; // 127.0.0.1 : ce PC seulement
 	uint16_t port = 9710;
 	int latency_ms = 20;
 	uint32_t video_kbps = 25000;
-	bool hevc = false;
+	flash::Codec codec = flash::Codec::H264; // format voulu (voir Sender)
 	std::string encoder = "auto";
 	uint32_t max_w = 1920, max_h = 1080;
 	bool cursor = true;

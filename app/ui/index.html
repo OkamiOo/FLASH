@@ -278,8 +278,8 @@ dialog .choix small { color: var(--discret); }
         <input type="range" id="qualite" min="6" max="80" step="1" value="25">
         <div class="etiquette" style="margin-top:14px"><span>Réseau</span><span class="valeur" id="reseau-v"></span></div>
         <input type="range" id="reseau" min="0" max="2" step="1" value="0">
-        <div class="etiquette" style="margin-top:14px"><span>Format</span></div>
-        <div class="seg" id="format"><button data-v="h264">H.264</button><button data-v="hevc">HEVC</button><button data-v="av1" disabled title="AV1 : pas encore pris en charge par FLASH">AV1</button></div>
+        <div class="etiquette" style="margin-top:14px"><span>Format</span><span class="valeur" id="format-v"></span></div>
+        <div class="seg" id="format"><button data-v="h264">H.264</button><button data-v="hevc">HEVC</button><button data-v="av1" disabled>AV1</button></div>
       </div>
     </aside>
   </div>
@@ -585,12 +585,33 @@ function dessinerEtat(e) {
   $("stats").textContent = morceaux.join(" · ");
   $("stats").title = e.latence_ms > 0 ? "Latence de la capture à l'affichage chez le PC le plus lent, et débit envoyé" : "";
 
+  majFormats(e);
+
   $("recepteurs").replaceChildren(...(e.recepteurs.length ? e.recepteurs.map(x => {
     const b = el("button", { textContent: "Retirer" });
     b.onclick = () => envoyer("retirer", { id: x.id });
     return el("div", { className: "ligne" }, el("span", { textContent: x.nom, title: x.nom }), b);
   }) : [el("div", { className: "vide-liste", textContent: "Aucun pour l'instant. Donnez le code d'invitation au PC qui doit recevoir." })]));
   majVues(e.vues || []);
+}
+
+// Un format n'est proposé que si l'encodeur de ce PC le produit et que tous les PC qui reçoivent
+// le décodent. Le format choisi qui ne l'est plus reste coché : l'envoi passe en H.264 en attendant.
+const NOMS_FORMAT = { h264: "H.264", hevc: "HEVC", av1: "AV1" };
+function majFormats(e) {
+  const possibles = e.formats || [], encodeur = e.formats_encodeur || [];
+  for (const b of $("format").querySelectorAll("button")) {
+    const v = b.dataset.v;
+    const ok = v === "h264" || possibles.includes(v);
+    b.disabled = !ok;
+    b.title = ok ? "" : NOMS_FORMAT[v] + (encodeur.includes(v) ? " : un PC qui reçoit ne sait pas le décoder"
+                                                                : " : l'encodeur de ce PC ne le produit pas");
+  }
+  const autre = e.format && R.codec && e.format !== R.codec;
+  $("format-v").textContent = autre ? "envoi en " + NOMS_FORMAT[e.format] : "";
+  $("format-v").title = !autre ? "" : encodeur.includes(R.codec)
+    ? NOMS_FORMAT[R.codec] + " reprendra dès que tous les PC qui reçoivent sauront le décoder"
+    : "L'encodeur de ce PC ne produit pas de " + NOMS_FORMAT[R.codec];
 }
 
 // ---------- Niveaux et aperçus ----------
@@ -637,6 +658,7 @@ function texteVue(v) {
   let t = Math.round(v.ips) + " i/s, " + nombre(v.debit) + " Mb/s";
   if (v.latence_ms) t += ", " + Math.round(v.latence_ms) + " ms de latence";
   if (v.pertes) t += ", " + pluriel(v.pertes, "paquet") + " perdu" + (v.pertes > 1 ? "s" : "");
+  if (v.remarque) t += ". " + v.remarque;
   return t;
 }
 function option(valeur, texte) { return el("option", { value: valeur, textContent: texte }); }

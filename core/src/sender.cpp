@@ -16,6 +16,7 @@ constexpr uint64_t kIdrStaticNs = 30'000'000ULL; // image clé demandée sur une
 constexpr uint64_t kIdrMinNs = 250'000'000ULL;   // pas plus de 4 images clés par seconde à la demande
 constexpr int64_t kAudioJumpNs = 5'000'000;      // au-delà, l'horodatage du son repart de celui du système
 constexpr uint64_t kReportFreshNs = 3'000'000'000ULL;
+constexpr uint64_t kFormatsGraceNs = 500'000'000ULL; // attente de l'annonce des formats d'un récepteur
 
 std::string json_escape(const std::string &s)
 {
@@ -79,8 +80,13 @@ bool Sender::start(const SenderOptions &options, ComPtr<ID3D11Device> device)
 	options_ = options;
 	device_ = device;
 	srt_init(true);
+	encoder_formats_ = video_encoder_formats(device_.Get(), options.video.encoder);
 	{
 		std::unique_lock lock(tracks_);
+		codec_ = choose_codec();
+		if (!(encoder_formats_ & format_bit(options.video.codec)))
+			FLOG_W("L'encodeur de ce PC ne produit pas de %s : vidéo en %s", codec_name(options.video.codec),
+			       codec_name(codec_));
 		publish_tracks();
 	}
 
@@ -164,7 +170,7 @@ bool Sender::open_encoder(VideoTrack &t)
 	vc.height = t.input->height();
 	vc.fps_num = options_.video.fps;
 	vc.bitrate_kbps = options_.video.kbps;
-	vc.codec = options_.video.codec;
+	vc.codec = codec_;
 	t.encoder = create_video_encoder(device_.Get(), vc, options_.video.encoder);
 	t.codec = vc.codec;
 	t.want_idr = true;
@@ -286,14 +292,72 @@ void Sender::set_gain(const std::string &key, float gain)
 
 void Sender::set_video_options(const VideoOptions &video)
 {
+	const bool other_encoder = video.encoder != options_.video.encoder;
+	if (other_encoder)
+		encoder_formats_ = video_encoder_formats(device_.Get(), video.encoder);
 	std::unique_lock lock(tracks_);
 	options_.video = video;
+	codec_ = choose_codec();
+	if (!(encoder_formats_ & format_bit(video.codec)))
+		FLOG_W("L'encodeur de ce PC ne produit pas de %s : vidéo en %s", codec_name(video.codec), codec_name(codec_));
+	reopen_encoders();
+}
+
+// La nouvelle table des pistes part avant la première image du nouveau format : un récepteur
+// ne donne jamais à son décodeur une image d'un autre format que celui qu'il attend
+void Sender::reopen_encoders()
+{
 	for (auto &t : video_) {
 		std::lock_guard tl(t->mutex);
 		t->encoder.reset();
+		t->codec = codec_;
+	}
+	publish_tracks();
+	for (auto &t : video_) {
+		std::lock_guard tl(t->mutex);
 		open_encoder(*t);
 	}
-	publish_tracks(); // le format a pu changer
+}
+
+// ---------- Format vidéo ----------
+
+uint8_t Sender::possible_formats() const
+{
+	return encoder_formats_ & server_.common_formats(kFormatsGraceNs, formats::kLegacy);
+}
+
+// Le format voulu s'il est possible, sinon H.264 (que tout le monde décode), sinon ce qui reste
+Codec Sender::choose_codec() const
+{
+	const uint8_t possible = possible_formats();
+	if (possible & format_bit(options_.video.codec))
+		return options_.video.codec;
+	for (Codec c : {Codec::H264, Codec::HEVC, Codec::AV1})
+		if (possible & format_bit(c))
+			return c;
+	return Codec::H264;
+}
+
+// Un récepteur arrive ou part : si le format possible change, les encodeurs vidéo sont refaits
+// et les récepteurs voient le nouveau format dans la table des pistes
+void Sender::update_codec()
+{
+	{
+		std::shared_lock lock(tracks_);
+		if (choose_codec() == codec_)
+			return;
+	}
+	std::unique_lock lock(tracks_);
+	const Codec want = choose_codec();
+	if (want == codec_)
+		return;
+	if (want == options_.video.codec)
+		FLOG_I("Vidéo de nouveau en %s", codec_name(want));
+	else
+		FLOG_I("Vidéo en %s (format choisi : %s, qu'un récepteur ne sait pas décoder)", codec_name(want),
+		       codec_name(options_.video.codec));
+	codec_ = want;
+	reopen_encoders();
 }
 
 // ---------- Vidéo ----------
@@ -433,6 +497,8 @@ void Sender::on_message(int client, const uint8_t *data, size_t size)
 		std::shared_lock lock(tracks_);
 		for (auto &t : video_)
 			t->want_idr = true;
+	} else if (size >= 2 && data[0] == control::kFormats) {
+		server_.set_formats(client, data[1]); // le fil de service en tient compte au prochain tour
 	} else if (size >= 5 && data[0] == control::kLatencyReport) {
 		const uint32_t us = ((uint32_t)data[1] << 24) | ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 8) | data[4];
 		std::lock_guard lock(reports_mutex_);
@@ -468,6 +534,8 @@ void Sender::housekeeping()
 			mux_.write_pcr(now);
 		if (n % 10 == 0)
 			mux_.write_tables();
+		if (n % 5 == 0)
+			update_codec(); // récepteur arrivé ou parti : le format possible a pu changer
 
 		std::shared_lock lock(tracks_);
 		if (n % 100 == 0)
@@ -514,7 +582,9 @@ std::string Sender::tracks_json_unlocked() const
 
 std::string Sender::metadata() const
 {
-	return "{\"v\":1,\"nom\":\"" + json_escape(options_.host_name) + "\",\"pistes\":" + tracks_json_unlocked() + "}";
+	// format_choisi : un récepteur qui ne le décode pas peut dire pourquoi l'image arrive en H.264
+	return "{\"v\":1,\"nom\":\"" + json_escape(options_.host_name) + "\",\"format_choisi\":\"" +
+	       codec_name(options_.video.codec) + "\",\"pistes\":" + tracks_json_unlocked() + "}";
 }
 
 std::vector<TrackStats> Sender::stats()

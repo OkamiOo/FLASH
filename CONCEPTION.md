@@ -54,7 +54,8 @@ appairage, découverte, codecs. Tout ce qui touche au temps réel est natif, san
 - Conversion : `ID3D11VideoProcessor` (BGRA vers NV12 BT.709, mise à l'échelle), sur le GPU,
   quel que soit le fabricant.
 - Encodage : NVENC appelé directement (en-têtes MIT), texture D3D11 en entrée sans copie.
-  H.264 par défaut, HEVC en option. Réglages : preset P1 à P3, tuning ultra-low-latency,
+  H.264 par défaut, HEVC et AV1 en option (l'AV1 seulement si l'encodeur et tous les
+  récepteurs le gèrent, § 16). Réglages : preset P1 à P3, tuning ultra-low-latency,
   aucune B-frame, CBR avec un tampon d'une image, intra-refresh sur 1 s, IDR à la demande
   (nouveau récepteur, perte signalée). Repli : encodeur matériel Media Foundation (AMD, Intel),
   puis logiciel Media Foundation en dernier recours.
@@ -84,7 +85,10 @@ appairage, découverte, codecs. Tout ce qui touche au temps réel est natif, san
   60 ms en Wi-Fi, choisie seule (mode Auto) d'après le RTT et les pertes. Paquets limités à
   1316 octets, envoyés dès la fin d'une image ou d'une trame son.
 - Voie de retour sur la même connexion SRT (bidirectionnelle) : demande d'IDR, pistes voulues
-  par le récepteur (les autres ne lui sont pas envoyées), statistiques.
+  par le récepteur (les autres ne lui sont pas envoyées), formats vidéo qu'il sait décoder,
+  statistiques.
+- AV1 : pas de stream_type normalisé dans le TS ; PES privé avec un descripteur
+  d'enregistrement « AV01 », une unité temporelle par PES (§ 16).
 
 ### 2.3 Horloge commune et synchro
 
@@ -109,7 +113,8 @@ elles, quoi que fasse le réseau.
 
 - Une connexion par émetteur, partagée par toutes les sources FLASH qui le visent.
 - Démultiplexage maison, décodage par le FFmpeg déjà livré avec OBS (FFmpeg 8.1.2, d3d11va,
-  donc NVDEC, AMD ou Intel), copie NV12 puis `obs_source_output_video`. Son : Opus décodé par
+  donc NVDEC, AMD ou Intel), copie NV12 puis `obs_source_output_video`. L'AV1 passe par le
+  décodeur `av1` de FFmpeg, uniquement sur la carte graphique. Son : Opus décodé par
   libopus puis `obs_source_output_audio`.
 - Sources : « FLASH vidéo » (émetteur, piste, son associé facultatif) et « FLASH audio »
   (émetteur, piste). Les listes se remplissent avec les émetteurs détectés et leurs pistes.
@@ -124,7 +129,7 @@ elles, quoi que fasse le réseau.
 Une visionneuse : fenêtre D3D11 (plein écran possible), son vers la sortie choisie (utile pour
 envoyer le son d'un ami dans un câble virtuel). Décodage par Media Foundation, intégré à
 Windows, pour garder l'appli légère. H.264 marche partout ; HEVC demande l'extension HEVC de
-Windows.
+Windows, AV1 l'extension AV1 et une carte graphique qui le décode.
 
 ### 2.6 Découverte, appairage, sécurité
 
@@ -536,7 +541,8 @@ Limites connues :
   récepteur.
 - Format : H.264 et HEVC. AV1 n'est proposé que si l'encodeur de ce PC et les décodeurs des
   récepteurs le gèrent ; il demande d'abord un transport AV1 dans le TS et l'échange des
-  capacités de décodage par la voie de retour. Pas dans ce chantier : bouton grisé.
+  capacités de décodage par la voie de retour. Pas dans ce chantier : bouton grisé (fait
+  ensuite, § 16).
 - Responsive : aucune barre de défilement horizontale ; sous 960 px la colonne latérale passe
   sous le contenu, sous 760 px la navigation ne garde que ses icônes. Fenêtre de 720×560 au
   minimum ; au premier lancement, 1100×760 au plus, réduite pour tenir dans l'écran.
@@ -622,4 +628,106 @@ Limites :
 - L'aperçu d'une scène qui n'est pas au programme ni envoyée peut rester noir : OBS ne fait
   tourner une capture de fenêtre ou de jeu que si sa scène est active. Une fois envoyée, la
   tuile montre sa vraie image.
-- AV1 : pas encore (voir plus haut).
+- AV1 : pas dans ce chantier (fait ensuite, § 16).
+
+## 16. AV1
+
+### Ce qui est fait
+
+- Encodage : NVENC en AV1 (puces depuis les RTX 40), mêmes réglages que pour H.264 et HEVC
+  (P2, ultra-low-latency, aucune B-frame, CBR sur une image, intra-refresh d'une seconde si la
+  puce le gère). Sortie en OBU avec leur taille (pas d'Annex B), en-tête de séquence répété à
+  chaque image clé : un récepteur prend le flux en route. Repli Media Foundation : l'encodeur AV1
+  matériel que le pilote fournit à Windows (NVIDIA, AMD, Intel) ; Windows n'a pas d'encodeur
+  AV1 logiciel.
+- Transport : l'AV1 n'a pas de stream_type dans la norme MPEG-TS. FLASH le met en PES privé
+  (stream_type 0x06, stream_id 0xBD) avec un descripteur d'enregistrement « AV01 », comme
+  l'Opus avec « Opus ». Une unité temporelle par PES, telle que l'encodeur la sort, close par
+  le même marqueur de fin d'image que les autres vidéos.
+- Tables sur plusieurs paquets : avec beaucoup de pistes (le descripteur de l'AV1 ajoute
+  6 octets par vidéo), la table des pistes peut dépasser un paquet de 188 octets. Elle est
+  maintenant découpée et recollée à la réception ; avant, elle était tronquée et refusée.
+- Échange des formats : chaque récepteur annonce dès sa connexion, par la voie de retour
+  (message 0x04 suivi d'un octet), les formats qu'il décode : 1 = H.264, 2 = HEVC, 4 = AV1.
+  - Plugin OBS : H.264 et HEVC toujours ; AV1 si le FFmpeg d'OBS a son décodeur `av1` et que
+    la carte graphique décode l'AV1 (profil DXVA, sortie NV12). Le seul décodeur AV1 logiciel
+    de ce FFmpeg (libaom) ne tient pas 60 images par seconde.
+  - Visionneuse : les formats dont Windows a le décodeur ; l'AV1 en plus seulement si la carte
+    le décode.
+  - Un récepteur d'avant cet échange n'annonce rien : au bout de 0,5 s, il compte pour
+    H.264 et HEVC.
+- Choix du format par l'émetteur : le format choisi part s'il est dans les formats de son
+  encodeur et dans ceux de tous les récepteurs connectés ; sinon H.264. Quand un récepteur
+  arrive ou part, l'émetteur refait ses encodeurs vidéo si le format possible change (vérifié
+  toutes les 50 ms). La nouvelle table des pistes part avant la première image du nouveau
+  format : un récepteur ne passe jamais une image d'un format à un décodeur de l'autre. Le
+  format choisi reprend tout seul dès qu'il redevient possible.
+- Décodage : plugin par le décodeur `av1` de FFmpeg en d3d11va ; visionneuse par Media
+  Foundation (extension AV1 de Windows, sur la carte graphique).
+- Interface : le bouton AV1 (et HEVC, par la même règle) n'est actif que si le format est
+  possible ; une bulle dit pourquoi sinon (« l'encodeur de ce PC ne le produit pas » ou « un PC
+  qui reçoit ne sait pas le décoder »). Si le format choisi ne l'est plus, il reste coché et la
+  colonne indique « envoi en H.264 ». Ligne de commande : `--av1`.
+- Message clair côté réception : l'émetteur met le format choisi dans ses métadonnées. Une
+  visionneuse qui ne décode pas l'AV1 l'affiche dans « Regarder » : extension AV1 de Windows
+  à installer (Microsoft Store), ou carte qui ne décode pas l'AV1, et l'image arrive en
+  H.264 en attendant. Le plugin l'écrit dans le journal d'OBS.
+- Réglages : `reglages.json` garde le format dans `format` (« h264 », « hevc », « av1 ») ;
+  l'ancienne clé `hevc` est encore lue.
+- VLC ou FFmpeg branchés sur l'émetteur pour déboguer n'annoncent rien : au bout de 0,5 s ils
+  comptent comme d'anciens récepteurs et tout l'envoi passe en H.264, qu'ils savent lire.
+  L'AV1 de FLASH ne sort donc que vers des récepteurs FLASH.
+- Visionneuse : un décodeur qui refuse une image, ou qui ne sort plus rien pendant 1 s alors
+  que les images arrivent, est refait et l'image repart de l'image clé suivante. Le décodeur
+  AV1 de Windows ne se remet pas seul d'une image de référence perdue (vu avec l'encodeur AV1
+  de Media Foundation : plus d'image du tout, malgré les images clés suivantes).
+- Ligne de commande : le relevé de l'envoi donne le format en cours et le nombre d'images clés.
+
+### Mesures
+
+Boucle locale, mire 1080p60, NVENC à 25 Mb/s, latence SRT 20 ms, RTX 4070 SUPER, le
+2026-10-17. Le FLASH installé tournait à côté : essais sur le port 9730, en ligne de commande.
+
+Plugin OBS (OBS de test, mire et bip, 60 s chacun) :
+
+| | H.264 | AV1 |
+|---|---|---|
+| Latence capture -> image composée par OBS | 47,4 ms | 50,6 ms |
+| dont décalage d'horloge | 38,0 ms | 42,5 ms |
+| Encodage | 2,1 ms | 2,5 ms |
+| Capture -> réception (encodage + SRT) | 23,5 ms | 23,9 ms |
+| Réception -> image décodée et copiée | 1,8 ms | 1,3 ms |
+| Écart son/image | -0,56 ms (écart-type 0,18) | -0,61 ms (écart-type 0,34) |
+| Images | 3 575 reçues, aucune perdue en route | 3 564 reçues, aucune perdue en route |
+| Charge | envoi 0,08 % CPU, OBS 0,98 % ; GPU 3D 12 %, encodeur 7 %, décodeur 6 % | envoi 0,19 % CPU, OBS 1,02 % ; GPU 3D 13 %, encodeur 7 %, décodeur 3 % |
+| Débit de la mire | 0,3 Mb/s | 0,1 Mb/s |
+
+Visionneuse de l'appli (mire sans son, fenêtre sur un écran à 60 Hz, 40 s chacun) :
+
+| | H.264 | AV1 |
+|---|---|---|
+| Latence capture -> écran | 36,5 ms | 36,5 ms, puis 44,0 ms après une image sautée |
+| Encodage | 2,12 ms | 2,10 ms |
+| Capture -> réception | 23,5 ms | 23,6 ms |
+| Réception -> image décodée | 0,29 ms | 0,24 ms |
+| Décodeur | Microsoft H264 Video Decoder (carte graphique) | AV1VideoExtension (carte graphique) |
+
+- AV1 par Media Foundation (« NVIDIA AV1 Encoder MFT ») : encodage 2,3 ms, latence 36,6 ms,
+  une image clé toutes les 2 s. Au premier essai, une image perdue a figé la visionneuse
+  (décodeur AV1 de Windows bloqué malgré les images clés suivantes) : d'où le décodeur refait
+  plus haut. Pas reproduit depuis, le correctif n'a donc pas encore été vu à l'œuvre.
+- Repli vérifié : envoi en AV1 vers la visionneuse, puis `ffprobe` (qui n'annonce rien) se
+  connecte : passage en H.264 0,5 s plus tard, retour à l'AV1 dès son départ, la visionneuse
+  suit les deux changements (quelques images sautées à chaque fois).
+
+Enseignements :
+
+- L'AV1 ne coûte rien en latence dans la chaîne de FLASH : encodage du même ordre, décodage
+  plus court sur la carte, aucune image perdue. Les 3 ms d'écart du plugin sont dans le
+  décalage d'horloge, que fixe le son et qui varie d'une session à l'autre (37,7 à 52,7 ms en
+  H.264 seul, § 11). L'écart de la visionneuse vient du calage sur le balayage de l'écran, qui
+  a basculé d'un demi-intervalle après une image sautée (même effet qu'au § 11).
+- Le décodeur de la carte travaille deux fois moins (3 % contre 6 %).
+- La mire, très simple, se compresse trois fois mieux en AV1. Sur une vraie image, l'encodeur
+  tient le débit choisi (CBR) : le gain se lit en qualité à débit égal, ou en débit à qualité
+  égale (curseur Qualité plus bas). Pas mesuré ici.

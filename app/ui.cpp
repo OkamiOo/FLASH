@@ -240,7 +240,7 @@ json settings_json()
 {
 	const EngineSettings s = g->engine.settings();
 	return {{"debit", s.video_kbps},
-		{"codec", s.hevc ? "hevc" : "h264"},
+		{"codec", format_key(s.codec)},
 		{"adresse", s.address},
 		{"latence", s.latency_ms},
 		{"demarrage", run_at_startup()},
@@ -445,7 +445,7 @@ void on_page_message(const json &m)
 		// les encodeurs à chaque cran
 		EngineSettings s = g->has_pending ? g->pending : g->engine.settings();
 		s.video_kbps = (uint32_t)std::clamp(m.value("debit", (int)s.video_kbps), 6000, 80000);
-		s.hevc = m.value("codec", s.hevc ? "hevc" : "h264") == "hevc";
+		s.codec = format_from_key(m.value("codec", std::string(format_key(s.codec))));
 		s.address = m.value("adresse", s.address);
 		s.latency_ms = m.value("latence", s.latency_ms);
 		s.cursor = m.value("curseur", s.cursor);

@@ -164,7 +164,7 @@ void SrtServer::run()
 				srt_epoll_add_usock(epoll_, c, &ev);
 				{
 					std::lock_guard lock(mutex_);
-					clients_.push_back({c, {}});
+					clients_.push_back({c, {}, now_ns()});
 				}
 				char host[64] = "?";
 				if (peer.ss_family == AF_INET)
@@ -247,6 +247,29 @@ bool SrtServer::wanted(uint16_t pid) const
 			return true;
 	}
 	return false;
+}
+
+void SrtServer::set_formats(int client, uint8_t formats)
+{
+	std::lock_guard lock(mutex_);
+	for (Client &c : clients_) {
+		if (c.sock == client)
+			c.formats = formats;
+	}
+}
+
+uint8_t SrtServer::common_formats(uint64_t grace_ns, uint8_t legacy) const
+{
+	const uint64_t now = now_ns();
+	uint8_t out = 0xFF;
+	std::lock_guard lock(mutex_);
+	for (const Client &c : clients_) {
+		if (c.formats >= 0)
+			out &= (uint8_t)c.formats;
+		else if (now - c.joined_ns >= grace_ns)
+			out &= legacy;
+	}
+	return out;
 }
 
 size_t SrtServer::client_count() const

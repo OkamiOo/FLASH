@@ -125,7 +125,7 @@ VideoOptions video_options(const EngineSettings &s)
 {
 	VideoOptions v;
 	v.kbps = s.video_kbps;
-	v.codec = s.hevc ? Codec::HEVC : Codec::H264;
+	v.codec = s.codec;
 	v.encoder = s.encoder;
 	return v;
 }
@@ -192,7 +192,10 @@ void Engine::load()
 		settings_.port = (uint16_t)r.value("port", (int)settings_.port);
 		settings_.latency_ms = r.value("latence", settings_.latency_ms);
 		settings_.video_kbps = r.value("debit", settings_.video_kbps);
-		settings_.hevc = r.value("hevc", settings_.hevc);
+		if (r.contains("format"))
+			settings_.codec = format_from_key(r.value("format", ""));
+		else if (r.value("hevc", false))
+			settings_.codec = Codec::HEVC; // réglages d'avant l'AV1
 		settings_.encoder = r.value("encodeur", settings_.encoder);
 		settings_.max_w = r.value("largeur", settings_.max_w);
 		settings_.max_h = r.value("hauteur", settings_.max_h);
@@ -238,7 +241,7 @@ void Engine::save(unsigned parts)
 			j["volumes"][key] = v;
 		j["fenetres"] = windows_;
 		j["reglages"] = {{"adresse", settings_.address}, {"port", settings_.port},     {"latence", settings_.latency_ms},
-				 {"debit", settings_.video_kbps},  {"hevc", settings_.hevc},     {"encodeur", settings_.encoder},
+				 {"debit", settings_.video_kbps},  {"format", format_key(settings_.codec)}, {"encodeur", settings_.encoder},
 				 {"largeur", settings_.max_w},     {"hauteur", settings_.max_h}, {"curseur", settings_.cursor},
 				 {"ouvert", settings_.open}};
 	}
@@ -560,7 +563,7 @@ void Engine::set_settings(const EngineSettings &s)
 		restart_sender();
 		return;
 	}
-	if (s.video_kbps != old.video_kbps || s.hevc != old.hevc || s.encoder != old.encoder)
+	if (s.video_kbps != old.video_kbps || s.codec != old.codec || s.encoder != old.encoder)
 		sender_->set_video_options(video_options(s));
 	if (s.max_w != old.max_w || s.max_h != old.max_h || s.cursor != old.cursor) {
 		for (const SourceChoice &c : sources) {
@@ -899,12 +902,26 @@ json Engine::status()
 					       {"active", t.active},
 					       {"ips", t.video && secs > 0 ? t.frames / secs : 0},
 					       {"kbps", kbps},
+					       {"cles", t.keyframes},
 					       {"encodage_ms", t.encode_ms_avg}});
 		}
 	}
 	// En-tête : débit envoyé et latence de bout en bout du récepteur le plus lent
 	j["debit_kbps"] = kbps_total;
 	j["latence_ms"] = sender_ ? sender_->receiver_latency_ms() : 0;
+
+	// Formats vidéo : ce que l'encodeur sait faire, ce qui est possible avec les récepteurs
+	// connectés, et celui qui part
+	auto keys = [](uint8_t bits) {
+		json list = json::array();
+		for (Codec c : {Codec::H264, Codec::HEVC, Codec::AV1})
+			if (bits & format_bit(c))
+				list.push_back(format_key(c));
+		return list;
+	};
+	j["formats_encodeur"] = keys(sender_ ? sender_->encoder_formats() : 0);
+	j["formats"] = keys(sender_ ? sender_->possible_formats() : 0);
+	j["format"] = sender_ ? format_key(sender_->video_codec()) : "";
 	return j;
 }
 

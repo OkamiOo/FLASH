@@ -9,6 +9,8 @@ void TsDemuxer::reset()
 	for (PidState &st : pids_)
 		st = PidState{};
 	pmt_pid_ = 0;
+	section_pid_ = 0xFFFF;
+	section_buf_.clear();
 	streams_.clear();
 }
 
@@ -59,8 +61,7 @@ void TsDemuxer::packet(const uint8_t *p)
 	const size_t n = ts::kPacket - pos;
 
 	if (pid == ts::kPidPat || (pmt_pid_ && pid == pmt_pid_)) {
-		if (pusi)
-			section(pid, payload, n);
+		section_data(pid, pusi, payload, n);
 		return;
 	}
 
@@ -126,15 +127,33 @@ void TsDemuxer::finish(uint16_t pid, PidState &st)
 	st.corrupt = false;
 }
 
-void TsDemuxer::section(uint16_t pid, const uint8_t *data, size_t size)
+// Une table peut s'étendre sur plusieurs paquets : on la rassemble avant de la lire
+void TsDemuxer::section_data(uint16_t pid, bool pusi, const uint8_t *data, size_t size)
 {
-	const size_t pointer = data[0];
-	if (1 + pointer + 3 > size)
+	if (pusi) {
+		const size_t pointer = data[0];
+		if (1 + pointer >= size)
+			return;
+		section_pid_ = pid;
+		section_buf_.assign(data + 1 + pointer, data + size);
+	} else if (pid == section_pid_ && !section_buf_.empty()) {
+		section_buf_.insert(section_buf_.end(), data, data + size);
+	} else {
 		return;
-	const uint8_t *s = data + 1 + pointer;
-	const size_t avail = size - 1 - pointer;
-	const size_t len = ((size_t)(s[1] & 0x0F) << 8) | s[2];
-	if (3 + len > avail || len < 9 || crc32_mpeg(s, 3 + len) != 0)
+	}
+	if (section_buf_.size() < 3)
+		return;
+	const size_t len = ((size_t)(section_buf_[1] & 0x0F) << 8) | section_buf_[2];
+	if (section_buf_.size() < 3 + len)
+		return; // la suite arrive dans le paquet suivant
+	section(pid, section_buf_.data(), 3 + len);
+	section_buf_.clear();
+}
+
+void TsDemuxer::section(uint16_t pid, const uint8_t *s, size_t size)
+{
+	const size_t len = size - 3;
+	if (len < 9 || crc32_mpeg(s, size) != 0)
 		return;
 	const size_t end = 3 + len - 4;
 
@@ -174,6 +193,8 @@ void TsDemuxer::section(uint16_t pid, const uint8_t *data, size_t size)
 				if (q[0] == 0x05 && q[1] >= 4 && q + 6 <= d_end) {
 					if (std::memcmp(q + 2, "Opus", 4) == 0)
 						st.codec = Codec::Opus;
+					else if (std::memcmp(q + 2, "AV01", 4) == 0)
+						st.codec = Codec::AV1;
 				}
 			}
 		}

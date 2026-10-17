@@ -65,10 +65,18 @@ public:
 	// Vrai si au moins un récepteur connecté veut cette piste.
 	bool wanted(uint16_t pid) const;
 
+	// Formats vidéo annoncés par un récepteur (bits de flash::formats)
+	void set_formats(int client, uint8_t formats);
+	// Formats que tous les récepteurs connectés décodent (tous si aucun). Un récepteur qui
+	// n'a rien annoncé est attendu pendant grace_ns après sa connexion, puis compte pour legacy.
+	uint8_t common_formats(uint64_t grace_ns, uint8_t legacy) const;
+
 private:
 	struct Client {
 		int sock;
 		std::vector<uint16_t> pids;
+		uint64_t joined_ns = 0;
+		int formats = -1; // -1 : pas encore annoncés
 	};
 
 	void run();

@@ -216,6 +216,7 @@ void Connection::on_streams(const std::vector<flash::TsStream> &streams)
 		sounds += st.codec == flash::Codec::Opus;
 	}
 	FLOG_I("%s : %d vidéo(s), %d son(s)", label_.c_str(), videos, sounds);
+	clock_.relax();
 	rebind();
 }
 

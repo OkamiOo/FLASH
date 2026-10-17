@@ -41,6 +41,10 @@ public:
 	int64_t offset_ns() const;
 	void set_margin(uint64_t margin_ns);
 	void reset();
+	// L'émetteur vient de changer ses pistes ou son format : un retard passager suit souvent
+	// (encodeurs refaits). La descente redevient rapide pendant 30 s, sinon la latence
+	// gagnée par ce retard mettrait des minutes à repartir.
+	void relax();
 
 private:
 	mutable std::mutex mutex_;
@@ -51,6 +55,7 @@ private:
 	uint64_t start_ns_ = 0;
 	uint64_t last_eval_ns_ = 0;
 	uint64_t last_update_ns_ = 0;
+	uint64_t relax_until_ns_ = 0;
 	uint64_t margin_;
 	bool have_offset_ = false;
 };

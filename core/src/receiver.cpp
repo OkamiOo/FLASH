@@ -16,6 +16,7 @@ constexpr uint64_t kWarmupNs = 500'000'000ULL;     // observations avant de pré
 constexpr int64_t kSlewDownNsPerS = 100'000;       // descente : 0,1 ms par seconde au plus...
 constexpr int64_t kFastSlewNsPerS = 2'000'000;     // ...sauf au démarrage : 2 ms par seconde
 constexpr uint64_t kFastPeriodNs = 10'000'000'000ULL;
+constexpr uint64_t kRelaxNs = 30'000'000'000ULL;   // descente rapide après un changement de pistes
 constexpr uint64_t kMask33 = (1ULL << 33) - 1;
 } // namespace
 
@@ -55,7 +56,8 @@ void ClockMap::observe(uint64_t pts_ns, uint64_t ready_ns)
 		offset_ = target; // en retard : on recule tout de suite
 	} else if (target < offset_) {
 		const uint64_t dt = ready_ns - last_update_ns_;
-		const int64_t rate = ready_ns - start_ns_ < kFastPeriodNs ? kFastSlewNsPerS : kSlewDownNsPerS;
+		const bool fast = ready_ns - start_ns_ < kFastPeriodNs || ready_ns < relax_until_ns_;
+		const int64_t rate = fast ? kFastSlewNsPerS : kSlewDownNsPerS;
 		const int64_t step = (int64_t)(dt * rate / 1'000'000'000ULL);
 		offset_ = target > offset_ - step ? target : offset_ - step;
 	}
@@ -97,7 +99,14 @@ void ClockMap::reset()
 	start_ns_ = 0;
 	last_eval_ns_ = 0;
 	last_update_ns_ = 0;
+	relax_until_ns_ = 0;
 	have_offset_ = false;
+}
+
+void ClockMap::relax()
+{
+	std::lock_guard lock(mutex_);
+	relax_until_ns_ = now_ns() + kRelaxNs;
 }
 
 // ---------- CadenceSmoother ----------

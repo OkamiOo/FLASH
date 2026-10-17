@@ -731,3 +731,90 @@ Enseignements :
 - La mire, très simple, se compresse trois fois mieux en AV1. Sur une vraie image, l'encodeur
   tient le débit choisi (CBR) : le gain se lit en qualité à débit égal, ou en débit à qualité
   égale (curseur Qualité plus bas). Pas mesuré ici.
+
+## 17. Endurance
+
+### Protocole
+
+Boucle locale sur le PC de jeu, le 2026-10-17 de 04:50 à 08:45 (3,9 h), version 0a7b637 (H.264,
+latence SRT 20 ms, 25 Mb/s par vidéo). L'appli tourne en ligne de commande (`--libre`, port
+9720) et envoie six pistes :
+
+- la mire (1080p60, heure de capture et numéro inscrits dans l'image, flash et bip à chaque
+  seconde), seule piste mesurée image par image ;
+- une scène d'un premier OBS portable (OBS-A), hors programme : une source navigateur animée
+  avec un son continu faible ;
+- l'écran 4, où tourne la même animation dans un navigateur en plein écran ;
+- trois sons : le bip de la mire, le son de la scène d'OBS-A, le son du système.
+
+Un second OBS portable (OBS-B) reçoit les six pistes et écrit le journal de mesure. Relevé
+toutes les 30 s, par processus : processeur, mémoire privée et de travail, handles, fils,
+objets GDI et USER, mémoire et moteurs du GPU (compteurs PDH), plus la machine entière
+(nvidia-smi). Le long segment sans coupure vient d'abord (3,6 h) ; les coupures occupent le
+dernier quart d'heure : OBS-B fermé puis relancé deux fois, l'appli tuée puis relancée trois
+fois (dont une fois 30 s plus tard), OBS-A fermé puis relancé.
+
+### Résultats
+
+| Critère (§ 1) | Mesuré | Objectif |
+|---|---|---|
+| Latence capture -> image composée par OBS | 51,7 ms (médiane), 51,9 ms (99 %), jamais plus de 60 ms sur 781 579 images | médiane ≤ 40 ms : non tenu (voir plus bas) |
+| Images | aucune perdue ; 220 reçues deux fois (répétées par l'émetteur) | |
+| Écart son/image | -0,59 ms en moyenne, écart-type 0,20, pire 16,3 ms (une seule fois) | tenu |
+| Dérive son/image | +0,004 ms par heure, soit +0,01 ms sur 4 h | tenu |
+| Émetteur (3 vidéos 1080p60 + 3 sons) | CPU 0,64 %, encodeur 25 %, 3D 6,7 %, mémoire privée 275 Mo stable | voir plus bas |
+| Récepteur OBS-B (3 flux, OBS entier) | CPU 3,2 %, soit 1,1 % par flux ; décodeur du GPU 18 % | tenu |
+| Reconnexion (appli tuée puis relancée) | image revenue 1,19 s, 1,46 s, 1,94 s après la relance | tenu |
+| OBS-B relancé | première image 2,3 à 2,6 s après le lancement d'OBS | |
+| OBS-A relancé (scène envoyée) | scène reprise 2,1 s après | |
+| Tenue | aucun plantage ; mémoire, handles, fils, GDI et USER plats sur 3,6 h | tenu sur 3,9 h (8 h pas encore faites) |
+
+- La scène d'OBS-A est passée à 60 i/s sans faiblir, l'écran 4 à 57 i/s en moyenne (capture de
+  Windows sur un écran à 60 Hz quand l'écran principal tourne à 165 Hz, § 12).
+- Le compteur de mémoire GPU « dédiée » d'OBS-A (source navigateur) monte par paliers d'environ
+  12 Go jusqu'à des valeurs impossibles, alors que la mémoire de la carte reste à 3,5 Go : un
+  défaut du compteur, pas une fuite.
+
+Latence, dans le découpage du journal : 23,5 ms de la capture à la réception (encodage 2,3 ms,
+latence SRT 20 ms, mise en paquets et envoi 1,2 ms), 1,9 ms de décodage, 18,2 ms d'attente
+avant la remise à OBS, 8,0 ms de la remise à l'image composée, soit 51,6 ms. Ce qui la fixe :
+l'heure de présentation tombe 38 ms après la capture, et c'est le son qui l'impose (une trame
+Opus de 10 ms part 10 ms après son horodatage, puis encodage, SRT et 2 ms de marge) ; l'image
+partage ce décalage pour rester synchrone. L'image passe ensuite au premier rendu d'OBS qui
+suit cette heure, 0 à 16,7 ms plus tard selon la phase entre la source et OBS : 13,6 ms ici
+(38 + 13,6 = 51,6 ms), environ 7 ms après la relance d'OBS-B (45 ms de latence), 8 ms en
+moyenne. La remise se fait au milieu de l'intervalle qui précède ce rendu, d'où les 8,0 ms de
+la dernière étape. Le budget du § 1 oubliait la trame de son. Pistes de gain : latence SRT de
+10 ms en filaire (-10 ms) et trames Opus de 5 ms (-5 ms), soit une trentaine de millisecondes
+en moyenne.
+
+Mémoire de l'émetteur : sur 241 Mo privés engagés, 141 Mo sont de la mémoire « write-combined »
+du pilote NVIDIA (tas d'envoi vers le GPU, sessions NVENC : trois ici), 55 Mo trois gros blocs
+encore à identifier (tampons de SRT laissés aux valeurs par défaut ?), 46 Mo de petits tas.
+Aucune interface chargée. L'objectif de 80 Mo ne tient pas compte de la part du pilote.
+
+### Trouvé pendant l'essai
+
+- OBS-A ne s'est pas fermé seul (arrêté au bout de 30 s) alors que l'appli envoyait sa scène :
+  le plugin garde la scène (et la source navigateur qu'elle contient) jusqu'au déchargement des
+  modules, après qu'OBS a vidé ses scènes. Fermé une fois l'appli partie, OBS-A s'arrête
+  normalement. À corriger : relâcher la vue dès qu'OBS retire la source (signal `source_remove`
+  de libobs) ou à la fermeture d'OBS.
+
+### Correction : redescente rapide après un changement de pistes
+
+Trouvé en vérifiant l'AV1 (§ 16) : quand l'émetteur change de format, il refait ses encodeurs
+vidéo et ses pistes s'arrêtent quelques dizaines de millisecondes. Le récepteur relevait
+aussitôt son décalage d'horloge (+43 ms dans l'essai) puis ne le redescendait qu'à 0,1 ms par
+seconde, la vitesse prévue pour suivre la dérive entre deux PC : la latence passait de 42 à
+92 ms et y restait plusieurs minutes. Désormais, quand la table des pistes change (format,
+piste ajoutée ou retirée), plugin et visionneuse autorisent pendant 30 s la descente rapide du
+démarrage (2 ms par seconde).
+
+Vérifié (mire en AV1 vers l'OBS de test, 80 s, ffprobe connecté à 20 s) : passage en H.264 puis
+retour à l'AV1, décalage monté à 43 ms puis revenu à 36,5 ms dans les 5 s suivantes, latence
+restée à 53,5 ms (quelques images à 70 ms au moment du changement), contre 92 ms pendant
+plusieurs minutes avant.
+
+Mémoire de l'émetteur avec une seule vidéo (mire) et un son : 202 Mo privés, contre 275 Mo avec
+trois vidéos : environ 36 Mo par session NVENC, le reste est commun.

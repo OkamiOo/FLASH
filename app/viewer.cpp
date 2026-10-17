@@ -463,6 +463,7 @@ void Viewer::Impl::on_streams(const std::vector<TsStream> &streams)
 {
 	std::lock_guard lock(streams_mutex_);
 	streams_ = streams;
+	clock_.relax();
 	rebind();
 }
 

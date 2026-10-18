@@ -971,10 +971,36 @@ installée lance ensuite son désinstalleur ; la portable dit de supprimer le do
   des réglages, fenêtre du premier lancement, page étroite à 125 %.
 - Tailles : dossier 3,7 Mo, zip 1,7 Mo, installeur 3,1 Mo.
 
-Pas encore vérifié : l'interface réelle (la fenêtre du premier lancement, la relance après une
-mise à jour, « Tout retirer ») et le chemin avec élévation, parce qu'il faut fermer le FLASH
-installé sur le PC de jeu et que la vraie copie du plugin remplacerait celui de l'OBS de
-stream ; le coût de l'interface WebView2 (mémoire, démarrage), pour la même raison.
+- Vraie interface de l'édition portable (2026-10-18, FLASH installé fermé le temps de l'essai,
+  réglages remis à l'identique après, plugin copié dans un dossier d'essai) : page prête 1,35 s
+  après le lancement (cache de WebView2 déjà chaud), fenêtre « Installer le plugin » ouverte à
+  1,6 s ; « Installer » copie le plugin, ferme la fenêtre, Réglages affiche « Installé et à
+  jour ». Un ancien `reglages.json` à 20 ms s'affiche bien en « Câble · 10 ms ».
+
+Pas encore vérifié : la relance après une vraie mise à jour, « Tout retirer » (il effacerait les
+réglages et appairages du PC de jeu) et le chemin avec élévation (la vraie copie du plugin
+remplacerait celui de l'OBS de stream).
+
+### Légèreté
+
+Mesuré sur la même interface, fenêtre ouverte, rien envoyé :
+
+| | Mémoire privée | Mémoire de travail | Processeur |
+|---|---|---|---|
+| Appli (moteur, capture prête, interface) | 94 Mo | 79 Mo | 0,22 % |
+| WebView2 (6 processus) | 232 Mo | 325 Mo | 0,06 % |
+
+Le zip pèse 1,7 Mo, le dossier 3,7 Mo (dont 1,7 Mo pour `flash.exe` et 0,7 Mo pour le runtime
+Visual C++) : WebView2 n'est pas livré, il fait partie de Windows. L'interface coûte donc
+surtout de la mémoire, aux deux tiers dans WebView2. Pistes, sans réécrire l'interface :
+
+- Fermer WebView2 quand la fenêtre est cachée (FLASH vit surtout près de l'horloge) et le
+  recréer à l'ouverture : environ 230 Mo rendus pendant tout ce temps, pour une ouverture de
+  fenêtre de l'ordre de 1,3 s au lieu d'instantanée.
+- À défaut, demander à WebView2 de réduire sa mémoire quand la fenêtre est cachée
+  (`MemoryUsageTargetLevel` à « faible ») : ouverture instantanée, gain à mesurer.
+- L'envoi seul, sans interface (ligne de commande), reste la forme la plus légère : voir § 17
+  pour sa mémoire, surtout faite du pilote NVIDIA.
 
 ### Signature du code (Authenticode)
 

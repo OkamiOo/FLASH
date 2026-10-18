@@ -76,6 +76,7 @@ try {
         Copy-Item "$src\obs\data\*" "$out\plugin-obs\data" -Recurse
         Copy-Item "$src\installer\LISEZMOI.txt" $out
         $licences = [ordered]@{
+            "flash.txt" = "LICENSE"
             "srt.txt" = ".deps\obs-deps\licenses\srt\LICENSE"; "mbedtls.txt" = ".deps\obs-deps\licenses\mbedtls\LICENSE"
             "opus.txt" = ".deps\opus\opus-1.5.2\COPYING"; "monocypher.txt" = "third_party\monocypher\LICENCE.md"
             "nlohmann-json.txt" = ".deps\obs-deps\licenses\nlohmann-json\LICENSE.MIT"

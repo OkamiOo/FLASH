@@ -278,11 +278,14 @@ third_party/   Monocypher
 | Opus | BSD-3 | mention de licence |
 | Monocypher | BSD-2 ou CC0 | mention de licence |
 | En-têtes NVENC (nv-codec-headers), AMF, WIL, C++/WinRT | MIT | mention de licence |
-| SDK WebView2 | licence Microsoft | redistribution du chargeur autorisée |
+| SDK WebView2 (chargeur) | BSD-3 (Microsoft) | mention de licence |
 
-Choix envisagé : tout FLASH sous GPL-3.0 ou ultérieure. Diffuser les binaires implique alors de
-publier les sources. Autre possibilité : l'appli sous une autre licence si elle ne contient
-aucun code GPL, le plugin restant sous GPL-3.0. À trancher avant la première diffusion.
+Choix du 2026-10-18 : tout FLASH, appli et plugin, sous GPL-3.0 ou ultérieure (fichier
+`LICENSE`). Diffuser les binaires implique de publier les sources : chaque Release vient d'un tag
+du dépôt. Le plugin devait de toute façon suivre la GPL-3.0 (FFmpeg d'OBS) ; une seule licence
+évite de séparer un code commun ouvert d'une appli fermée, et c'est la condition d'une signature
+gratuite plus tard (§ 19). Les licences des composants sont dans `licences\` de chaque édition,
+celle de FLASH en `licences\flash.txt`.
 
 ## 10. Risques connus
 
@@ -511,7 +514,8 @@ Limites connues :
 - L'installeur n'est pas signé : au premier lancement, SmartScreen affiche « Windows a protégé
   votre ordinateur » (« Informations complémentaires », puis « Exécuter quand même »). Un
   certificat de signature de code règlerait ça avant une diffusion publique.
-- La licence de FLASH lui-même reste à choisir avant toute diffusion.
+- La licence de FLASH lui-même restait à choisir : GPL-3.0 ou plus récente depuis le
+  2026-10-18 (§ 9).
 
 ## 15. Nouvelle interface et envoi depuis OBS (conception)
 
@@ -931,14 +935,16 @@ Même principe que SWIFT, clé propre à FLASH :
 - Plugin : ses fichiers sont mis à jour dans `plugin-obs\` ; Réglages montre alors « une autre
   version est installée » et propose la mise à jour, OBS fermé, avec l'élévation seulement si
   elle est nécessaire.
-- Adresses de publication : aucune pour l'instant, l'hébergement reste à choisir.
-  `FLASH_MAJ_URL` en donne une pour les essais. Les fichiers sont publiés à plat, « / »
+- Adresse de publication : les Releases GitHub de `OkamiOo/FLASH` (comme SWIFT), dépôt à créer
+  à la première publication ; d'ici là, la recherche ne trouve rien. `FLASH_MAJ_URL` en donne
+  une autre pour les essais. Les fichiers sont publiés à plat, « / »
   devenant « . » (`plugin-obs.bin.64bit.flash-obs.dll`) : les Releases de GitHub ne gardent pas
   de dossiers ; `signer` refuse deux chemins qui donneraient le même nom.
 - `tools/publier.ps1` prépare une version dans `dist\publication\<version>\` : refuse de
   partir avec des modifications non commitées, compile les deux éditions, signe le manifeste,
   range les fichiers à plat, ajoute le zip, l'installeur, leurs SHA-256 et les notes. Rien
-  n'est envoyé.
+  n'est envoyé sans `-Publier`, qui crée la Release `v<version>` sur ce commit
+  (`gh release create`).
 
 ### Retrait complet
 
@@ -1003,7 +1009,7 @@ Pour plus tard, conditions lues en octobre 2026 :
 Aucun certificat ne fait disparaître l'avertissement de SmartScreen tout de suite : la
 réputation se construit avec les lancements.
 
-### Licence : deux cas préparés, à trancher avant toute diffusion
+### Licence
 
 1. Tout FLASH sous GPL-3.0 ou plus récente : licence approuvée par l'OSI, dépôt public avec les
    sources de l'appli et du plugin. C'est la seule voie qui ouvre plus tard la signature
@@ -1015,6 +1021,6 @@ réputation se construit avec les lancements.
    Le code de `core/` appartient à l'auteur : il peut être publié sous GPL avec le plugin et
    rester fermé dans l'appli. La signature SignPath est alors exclue.
 
-Dans les deux cas, chaque édition porte les licences de ses composants dans `licences\` (SRT
-sous MPL-2.0, dont il faut dire où trouver les sources, mbedTLS, Opus, Monocypher, nlohmann
-json, en-têtes NVENC, chargeur WebView2), et rien n'est publié avant ce choix.
+Choisi le 2026-10-18 : le premier cas (§ 9). Chaque édition porte les licences de ses
+composants dans `licences\` (SRT sous MPL-2.0, dont il faut dire où trouver les sources,
+mbedTLS, Opus, Monocypher, nlohmann json, en-têtes NVENC, chargeur WebView2).

@@ -30,8 +30,8 @@ constexpr uint8_t kPublicKey[32] = {0xf1, 0xce, 0xf8, 0x5d, 0x8f, 0x1e, 0x4e, 0x
 
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-// Adresses de publication, dans l'ordre : aucune tant que l'hébergement n'est pas choisi.
-// FLASH_MAJ_URL les remplace, pour les essais.
+// Adresses de publication, dans l'ordre : les Releases GitHub du projet. D'autres peuvent
+// s'ajouter sans changer le format du manifeste. FLASH_MAJ_URL les remplace, pour les essais.
 std::vector<std::string> addresses()
 {
 	char buf[1024];
@@ -42,7 +42,7 @@ std::vector<std::string> addresses()
 			a += '/';
 		return {a};
 	}
-	return {};
+	return {"https://github.com/OkamiOo/FLASH/releases/latest/download/"};
 }
 
 fs::path app_dir()

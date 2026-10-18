@@ -1,10 +1,12 @@
 ﻿# Prépare une version de FLASH à publier : édition portable, installeur, fichiers des mises à jour
-# (à plat) et manifeste signé, empreintes SHA-256, notes. Rien n'est envoyé : la publication se
-# fait à la main, une fois l'hébergement choisi.
-#   powershell -ExecutionPolicy Bypass -File tools\publier.ps1 -Notes "Ce qui change"
+# (à plat) et manifeste signé, empreintes SHA-256, notes. Rien n'est envoyé sans -Publier, qui crée
+# la Release GitHub (les mises à jour automatiques la lisent).
+#   powershell -ExecutionPolicy Bypass -File tools\publier.ps1 -Notes "Ce qui change" [-Publier]
 param(
     [string]$Notes = "",
-    [string]$Cle = (Join-Path $env:USERPROFILE ".flash-cle\flash-maj.cle")
+    [string]$Cle = (Join-Path $env:USERPROFILE ".flash-cle\flash-maj.cle"),
+    [string]$Depot = "OkamiOo/FLASH",
+    [switch]$Publier
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -50,10 +52,21 @@ $Notes
 Édition installable : ``FLASH-$version-installation.exe``, pour l'utilisateur seul.
 Les versions déjà en place se mettent à jour toutes seules.
 
+FLASH est sous licence GPL-3.0 ou plus récente ; les sources sont dans ce dépôt (le tag de la
+version). SRT (MPL-2.0) : sources sur https://github.com/Haivision/srt.
+
 Empreintes SHA-256 :
 $($empreintes -join "`n")
 "@
 [IO.File]::WriteAllText((Join-Path $sortie "notes.md"), $texte.Trim() + "`n", (New-Object Text.UTF8Encoding $false))
 
 Get-ChildItem $sortie | Select-Object Name, @{ n = "Ko"; e = { [math]::Round($_.Length / 1KB) } } | Format-Table -AutoSize | Out-String | Write-Host
-"FLASH $version (commit $commit) prêt dans $sortie. Rien n'a été publié."
+if (-not $Publier) {
+    "FLASH $version (commit $commit) prêt dans $sortie. Rien n'a été publié."
+    return
+}
+# La Release porte le tag de ce commit : ses sources sont celles des binaires
+$fichiers = Get-ChildItem $sortie -File | Where-Object { $_.Name -ne "notes.md" } | ForEach-Object { $_.FullName }
+gh release create "v$version" @fichiers --repo $Depot --target (git -C $root rev-parse HEAD) --title "FLASH $version" --notes-file (Join-Path $sortie "notes.md")
+if ($LASTEXITCODE) { throw "gh release : échec" }
+"FLASH $version (commit $commit) publié sur $Depot."

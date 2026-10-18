@@ -42,4 +42,8 @@ plus de 100 euros par an). Au premier lancement, Windows peut afficher « Window
 votre ordinateur » : cliquez sur « Informations complémentaires », puis « Exécuter quand même ».
 L'avertissement disparaît quand assez de personnes ont lancé la même version.
 
-Licences des composants : dossier licences.
+Licence
+-------
+FLASH est un logiciel libre sous licence GPL-3.0 ou plus récente (licences\flash.txt). Sources :
+https://github.com/OkamiOo/FLASH. Licences des composants : dossier licences ; sources de SRT :
+https://github.com/Haivision/srt.

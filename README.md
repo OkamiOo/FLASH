@@ -66,6 +66,10 @@ La conception, les mesures et les choix sont dans CONCEPTION.md.
 
 ## Licence
 
-À préciser avant toute diffusion. Le plugin pour OBS Studio est lié à libobs (GPL-2.0 ou plus
-récente) et sera diffusé avec ses sources. Les licences des composants sont dans le dossier
-`licences` de chaque édition.
+FLASH, l'appli comme le plugin pour OBS Studio, est un logiciel libre sous licence GPL-3.0 ou
+plus récente : voir `LICENSE`. Les sources de chaque version sont celles de son tag dans ce
+dépôt.
+
+Composants : SRT (MPL-2.0, sources sur https://github.com/Haivision/srt), mbedTLS (Apache-2.0),
+Opus (BSD-3), Monocypher (BSD-2 ou CC0), nlohmann json, en-têtes NVENC (MIT), chargeur WebView2
+(BSD-3). Leurs licences sont dans le dossier `licences` de chaque édition.

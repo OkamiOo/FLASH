@@ -20,3 +20,5 @@ CMakeUserPresets.json
 .*
 !.gitignore
 !.gitattributes
+# Clés de signature des mises à jour : jamais dans un dépôt
+*.cle

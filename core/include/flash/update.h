@@ -42,12 +42,12 @@ std::string write_manifest(const Manifest &m);
 
 // Chemin relatif sans danger : pas de lecteur, pas de « .. », pas de dossier caché
 bool safe_path(const std::string &path);
-// Nom du fichier publié : à plat, « / » remplacé par « . » (les Releases ne gardent pas de dossiers)
-std::string flat_name(const std::string &path);
 
 // « 0.10.0 » plus récente que « 0.9.3 »
 bool newer(const std::string &a, const std::string &b);
 
+// Adresse vers laquelle renvoie une redirection (sans la suivre)
+bool redirect_location(const std::string &url, std::string &location, std::string &error);
 // Téléchargement entier en mémoire. HTTPS seulement, sauf vers ce PC (essais).
 bool download(const std::string &url, std::vector<uint8_t> &out, std::string &error, size_t max_size = 64u << 20);
 

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(flash VERSION 0.3.0 LANGUAGES C CXX)
+project(flash VERSION 0.3.1 LANGUAGES C CXX)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "FLASH se compile en 64 bits uniquement")
@@ -34,6 +34,7 @@ flash_import_lib(flash::srt srt.lib)
 flash_import_lib(flash::avcodec avcodec.lib)
 flash_import_lib(flash::avutil avutil.lib)
 flash_import_lib(flash::swresample swresample.lib)
+flash_import_lib(flash::zlib zlibstatic.lib)
 
 # Opus 1.5.2, compilé dans l'appli (sources dans .deps/opus)
 set(OPUS_STATIC_RUNTIME ON CACHE BOOL "" FORCE)

@@ -1,6 +1,6 @@
-﻿# Prépare une version de FLASH à publier : édition portable, installeur, fichiers des mises à jour
-# (à plat) et manifeste signé, empreintes SHA-256, notes. Rien n'est envoyé sans -Publier, qui crée
-# la Release GitHub (les mises à jour automatiques la lisent).
+﻿# Prépare une version de FLASH à publier : trois fichiers, dans l'ordre où GitHub les montre
+# (par nom) : l'installeur, le zip portable (qui porte aussi le manifeste signé des mises à jour),
+# le zip des licences. Rien n'est envoyé sans -Publier, qui crée la Release GitHub.
 #   powershell -ExecutionPolicy Bypass -File tools\publier.ps1 -Notes "Ce qui change" [-Publier]
 param(
     [string]$Notes = "",
@@ -24,49 +24,75 @@ try {
 }
 $version = [regex]::Match((Get-Content (Join-Path $root "CMakeLists.txt") -Raw), "project\(flash VERSION ([0-9.]+)").Groups[1].Value
 $portable = Join-Path $root "dist\FLASH-$version-portable"
-$zip = Join-Path $root "dist\FLASH-$version-portable.zip"
 $installeur = Join-Path $root "dist\FLASH-$version-installation.exe"
 
-# Le manifeste est calculé sur une copie du dossier portable (chemins relatifs), puis chaque
-# fichier est rangé à plat sous le nom que téléchargent les mises à jour (« / » devient « . »)
-$sortie = Join-Path $root "dist\publication\$version"
-$dossier = Join-Path $root "dist\publication\$version-dossier"
-foreach ($d in $sortie, $dossier) { if (Test-Path $d) { Remove-Item -Recurse -Force $d } }
-Copy-Item $portable $dossier -Recurse
-New-Item -ItemType Directory -Force $sortie | Out-Null
-& (Join-Path $root "build\tools\signer.exe") manifeste $dossier $version $Cle $Notes | Out-Null
-if ($LASTEXITCODE) { throw "manifeste : échec" }
-foreach ($f in Get-ChildItem $dossier -Recurse -File) {
-    $nom = $f.FullName.Substring($dossier.Length + 1).Replace("\", ".")
-    Copy-Item $f.FullName (Join-Path $sortie $nom)
+# Entrées en « / » : un zip fait par Compress-Archive (PowerShell 5) garde des « \ »
+function Zipper([string]$dossier, [string]$zip) {
+    Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::Open($zip, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($f in Get-ChildItem $dossier -Recurse -File) {
+            $nom = $f.FullName.Substring($dossier.Length + 1).Replace("\", "/")
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $nom, [IO.Compression.CompressionLevel]::Optimal)
+        }
+    } finally { $archive.Dispose() }
 }
-Remove-Item -Recurse -Force $dossier
-Copy-Item $zip, $installeur $sortie
 
-$empreintes = foreach ($f in Get-Item $zip, $installeur) { "$((Get-FileHash $f -Algorithm SHA256).Hash.ToLower())  $($f.Name)" }
-[IO.File]::WriteAllLines((Join-Path $sortie "SHA256.txt"), [string[]]$empreintes, (New-Object Text.UTF8Encoding $false))
+$sortie = Join-Path $root "dist\publication\$version"
+if (Test-Path $sortie) { Remove-Item -Recurse -Force $sortie }
+New-Item -ItemType Directory -Force $sortie | Out-Null
+$etape = Join-Path $sortie "etape"
+
+# 1. Le zip portable, avec le manifeste signé (chemins relatifs, SHA-256 de chaque fichier)
+New-Item -ItemType Directory -Force $etape | Out-Null
+Copy-Item $portable "$etape\portable" -Recurse
+# Le manifeste garde les notes sur une ligne : il lit une clé par ligne
+$notesManifeste = (($Notes -split "\r?\n") | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join " "
+& (Join-Path $root "build\tools\signer.exe") manifeste "$etape\portable" $version $Cle $notesManifeste | Out-Null
+if ($LASTEXITCODE) { throw "manifeste : échec" }
+Zipper "$etape\portable" (Join-Path $sortie "FLASH-$version-portable.zip")
+
+# 2. Les licences, le LISEZMOI et l'endroit où trouver les sources
+New-Item -ItemType Directory -Force "$etape\licences" | Out-Null
+Copy-Item "$portable\licences\*" "$etape\licences"
+Copy-Item "$portable\LISEZMOI.txt" "$etape\licences"
+$sources = @"
+FLASH $version est un logiciel libre sous licence GPL-3.0 ou plus récente (flash.txt).
+Sources de cette version : https://github.com/$Depot/tree/v$version (archives « Source code »
+de la Release).
+SRT (MPL-2.0) : sources sur https://github.com/Haivision/srt.
+"@
+[IO.File]::WriteAllText("$etape\licences\SOURCES.txt", $sources.Replace("`r`n", "`n").Trim() + "`n", (New-Object Text.UTF8Encoding $false))
+Zipper "$etape\licences" (Join-Path $sortie "FLASH-Licences-$version.zip")
+
+# 3. L'installeur
+Copy-Item $installeur $sortie
+Remove-Item -Recurse -Force $etape
+
+$fichiers = Get-ChildItem $sortie -File | Sort-Object Name
+$empreintes = foreach ($f in $fichiers) { "- ``$($f.Name)`` : ``$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower())``" }
 $texte = @"
 $Notes
 
-Édition portable : télécharger ``FLASH-$version-portable.zip``, le dézipper, lancer ``flash.exe``.
-Édition installable : ``FLASH-$version-installation.exe``, pour l'utilisateur seul.
-Les versions déjà en place se mettent à jour toutes seules.
+- ``FLASH-$version-installation.exe`` : FLASH installé pour l'utilisateur, sans droits d'administrateur.
+- ``FLASH-$version-portable.zip`` : dézipper, lancer ``flash.exe``.
+- ``FLASH-Licences-$version.zip`` : licences des composants et emplacement des sources.
 
-FLASH est sous licence GPL-3.0 ou plus récente ; les sources sont dans ce dépôt (le tag de la
-version). SRT (MPL-2.0) : sources sur https://github.com/Haivision/srt.
+Les copies en 0.3.1 ou plus récente se mettent à jour toutes seules.
 
-Empreintes SHA-256 :
+Empreintes SHA-256 (GitHub les affiche aussi à côté de chaque fichier) :
 $($empreintes -join "`n")
-"@
-[IO.File]::WriteAllText((Join-Path $sortie "notes.md"), $texte.Trim() + "`n", (New-Object Text.UTF8Encoding $false))
 
-Get-ChildItem $sortie | Select-Object Name, @{ n = "Ko"; e = { [math]::Round($_.Length / 1KB) } } | Format-Table -AutoSize | Out-String | Write-Host
+FLASH est sous licence GPL-3.0 ou plus récente ; les sources de cette version sont celles du tag ``v$version``.
+"@
+[IO.File]::WriteAllText((Join-Path $sortie "notes.md"), $texte.Replace("`r`n", "`n").Trim() + "`n", (New-Object Text.UTF8Encoding $false))
+
+$fichiers | Select-Object Name, @{ n = "Ko"; e = { [math]::Round($_.Length / 1KB) } } | Format-Table -AutoSize | Out-String | Write-Host
 if (-not $Publier) {
     "FLASH $version (commit $commit) prêt dans $sortie. Rien n'a été publié."
     return
 }
 # La Release porte le tag de ce commit : ses sources sont celles des binaires
-$fichiers = Get-ChildItem $sortie -File | Where-Object { $_.Name -ne "notes.md" } | ForEach-Object { $_.FullName }
-gh release create "v$version" @fichiers --repo $Depot --target (git -C $root rev-parse HEAD) --title "FLASH $version" --notes-file (Join-Path $sortie "notes.md")
+gh release create "v$version" @($fichiers.FullName) --repo $Depot --target (git -C $root rev-parse HEAD) --title "FLASH $version" --notes-file (Join-Path $sortie "notes.md")
 if ($LASTEXITCODE) { throw "gh release : échec" }
 "FLASH $version (commit $commit) publié sur $Depot."

@@ -127,13 +127,6 @@ int make_manifest(const fs::path &dir, const std::string &version, const fs::pat
 		m.files.push_back({rel, data.size(), sha256(data.data(), data.size())});
 	}
 	std::sort(m.files.begin(), m.files.end(), [](const File &a, const File &b) { return a.path < b.path; });
-	// Publiés à plat : deux chemins ne doivent pas donner le même nom
-	for (size_t i = 1; i < m.files.size(); i++)
-		for (size_t j = 0; j < i; j++)
-			if (flat_name(m.files[i].path) == flat_name(m.files[j].path)) {
-				std::fprintf(stderr, "signer : même nom publié pour %s et %s\n", m.files[i].path.c_str(), m.files[j].path.c_str());
-				return 1;
-			}
 	if (std::none_of(m.files.begin(), m.files.end(), [](const File &f) { return f.path == "flash.exe"; })) {
 		std::fprintf(stderr, "signer : flash.exe absent du dossier\n");
 		return 1;

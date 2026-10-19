@@ -27,7 +27,7 @@ Mises à jour
 ------------
 FLASH vérifie chaque jour s'il existe une nouvelle version. Chaque mise à jour est signée : FLASH
 refuse tout fichier dont la signature ou l'empreinte ne correspond pas. Seuls les fichiers qui
-ont changé sont téléchargés, et la nouvelle version est essayée avant d'être gardée. Le plugin
+ont changé sont remplacés, et la nouvelle version est essayée avant d'être gardée. Le plugin
 d'OBS se met à jour depuis Réglages, OBS fermé.
 
 Tout retirer

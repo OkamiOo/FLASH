@@ -2,6 +2,7 @@
 
 #include <flash/log.h>
 #include <flash/update.h>
+#include <flash/zip.h>
 
 #include <windows.h>
 #include <shellapi.h>
@@ -9,6 +10,7 @@
 #include <tlhelp32.h>
 
 #include <cstdio>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -30,8 +32,9 @@ constexpr uint8_t kPublicKey[32] = {0xf1, 0xce, 0xf8, 0x5d, 0x8f, 0x1e, 0x4e, 0x
 
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
-// Adresses de publication, dans l'ordre : les Releases GitHub du projet. D'autres peuvent
-// s'ajouter sans changer le format du manifeste. FLASH_MAJ_URL les remplace, pour les essais.
+// Adresses de publication, dans l'ordre : les Releases GitHub du projet (« latest » renvoie vers la
+// dernière version, « download/v<version>/ » donne ses fichiers). D'autres peuvent s'ajouter si
+// elles suivent la même forme. FLASH_MAJ_URL les remplace, pour les essais.
 std::vector<std::string> addresses()
 {
 	char buf[1024];
@@ -42,7 +45,7 @@ std::vector<std::string> addresses()
 			a += '/';
 		return {a};
 	}
-	return {"https://github.com/OkamiOo/FLASH/releases/latest/download/"};
+	return {"https://github.com/OkamiOo/FLASH/releases/"};
 }
 
 fs::path app_dir()
@@ -137,9 +140,11 @@ bool new_exe_starts(const fs::path &dir)
 	return r == WAIT_OBJECT_0 && code == 0;
 }
 
-bool install(const std::string &base, const update::Manifest &m, const fs::path &dir, std::string &error)
+// Le zip portable de la version, déjà téléchargé ; le manifeste qu'il porte a été vérifié
+bool install(const std::vector<uint8_t> &archive, const std::vector<zip::Entry> &entries, const update::Manifest &m,
+	     const fs::path &dir, std::string &error)
 {
-	// 1. Télécharger et vérifier tout ce qui a changé, dans le sous-dossier maj
+	// 1. Extraire et vérifier tout ce qui a changé, dans le sous-dossier maj
 	const fs::path staging = dir / L"maj";
 	std::error_code ec;
 	fs::remove_all(staging, ec);
@@ -149,10 +154,10 @@ bool install(const std::string &base, const update::Manifest &m, const fs::path 
 		if (read_file(dir / from_rel(f.path), current) && current.size() == f.size &&
 		    update::sha256(current.data(), current.size()) == f.sha256)
 			continue;
+		const auto entry = std::find_if(entries.begin(), entries.end(), [&](const zip::Entry &e) { return e.name == f.path; });
 		std::vector<uint8_t> data;
-		if (!update::download(base + update::flat_name(f.path), data, error))
-			return false;
-		if (data.size() != f.size || update::sha256(data.data(), data.size()) != f.sha256) {
+		if (entry == entries.end() || !zip::extract(archive, *entry, data) || data.size() != f.size ||
+		    update::sha256(data.data(), data.size()) != f.sha256) {
 			fs::remove_all(staging, ec);
 			error = f.path + " ne correspond pas au manifeste";
 			return false;
@@ -282,28 +287,47 @@ bool has_address() { return !addresses().empty(); }
 Result check(std::string &message)
 {
 	for (const std::string &base : addresses()) {
-		std::vector<uint8_t> text, sig;
-		std::string error;
-		if (!update::download(base + "manifeste.txt", text, error, 1 << 20) ||
-		    !update::download(base + "manifeste.sig", sig, error, 4096))
+		// Dernière version : la page « latest » des Releases renvoie vers celle de son tag
+		std::string location, error;
+		if (!update::redirect_location(base + "latest", location, error))
 			continue;
-		update::Manifest m;
-		if (!update::parse_manifest(std::string(text.begin(), text.end()), std::string(sig.begin(), sig.end()), kPublicKey, m,
-					    error)) {
-			message = error;
-			FLOG_W("Mise à jour : %s", error.c_str());
-			return Result::Failed;
-		}
-		if (!update::newer(m.version, FLASH_VERSION))
+		const size_t tag = location.rfind("/tag/v");
+		const std::string version = tag == std::string::npos ? "" : location.substr(tag + 6);
+		if (version.empty() || version.find_first_not_of("0123456789.") != std::string::npos)
+			continue; // aucune version publiée
+		if (!update::newer(version, FLASH_VERSION))
 			return Result::Nothing;
-		if (!install(base, m, app_dir(), error)) {
+
+		// Le zip portable de cette version porte ses fichiers et le manifeste signé : c'est la
+		// signature qui fait foi, pas l'adresse
+		const std::string name = "FLASH-" + version + "-portable.zip";
+		std::vector<uint8_t> archive, text, sig;
+		std::vector<zip::Entry> entries;
+		auto read = [&](const char *path, std::vector<uint8_t> &out, size_t max) {
+			const auto e = std::find_if(entries.begin(), entries.end(), [&](const zip::Entry &x) { return x.name == path; });
+			return e != entries.end() && zip::extract(archive, *e, out, max);
+		};
+		update::Manifest m;
+		if (!update::download(base + "download/v" + version + "/" + name, archive, error))
 			message = error;
-			FLOG_W("Mise à jour vers %s : %s", m.version.c_str(), error.c_str());
-			return Result::Failed;
+		else if (!zip::list(archive, entries))
+			message = name + " illisible";
+		else if (!read("manifeste.txt", text, 1 << 20) || !read("manifeste.sig", sig, 4096))
+			message = "manifeste absent de " + name;
+		else if (!update::parse_manifest(std::string(text.begin(), text.end()), std::string(sig.begin(), sig.end()),
+						 kPublicKey, m, error))
+			message = error;
+		else if (m.version != version)
+			message = "le manifeste ne correspond pas à la version publiée";
+		else if (!install(archive, entries, m, app_dir(), error))
+			message = error;
+		else {
+			message = m.version;
+			FLOG_I("Mise à jour %s installée, active au prochain lancement", m.version.c_str());
+			return Result::Installed;
 		}
-		message = m.version;
-		FLOG_I("Mise à jour %s installée, active au prochain lancement", m.version.c_str());
-		return Result::Installed;
+		FLOG_W("Mise à jour vers %s : %s", version.c_str(), message.c_str());
+		return Result::Failed;
 	}
 	return Result::Nothing;
 }

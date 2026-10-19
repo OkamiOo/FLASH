@@ -26,12 +26,15 @@ acceptez pour les réseaux privés.
 
 ## Mises à jour
 
-FLASH vérifie chaque jour s'il existe une nouvelle version. Le manifeste de chaque version donne
-l'empreinte SHA-256 de chaque fichier et il est signé (Ed25519) ; la clé publique est dans
-FLASH. Une mise à jour dont la signature ou une empreinte ne correspond pas est refusée. Seuls
-les fichiers qui ont changé sont téléchargés, et la nouvelle version est essayée avant d'être
-gardée : si elle ne démarre pas, l'ancienne revient. Le plugin d'OBS se met à jour depuis les
-réglages, OBS fermé.
+FLASH vérifie chaque jour s'il existe une nouvelle version sur la page des Releases. Le zip
+portable de chaque version porte un manifeste qui donne l'empreinte SHA-256 de chaque fichier ;
+ce manifeste est signé (Ed25519) et la clé publique est dans FLASH. Une mise à jour dont la
+signature ou une empreinte ne correspond pas est refusée. Seuls les fichiers qui ont changé sont
+remplacés, et la nouvelle version est essayée avant d'être gardée : si elle ne démarre pas,
+l'ancienne revient. Le plugin d'OBS se met à jour depuis les réglages, OBS fermé.
+
+Chaque Release contient trois fichiers : l'installeur, le zip portable et le zip des licences
+(avec l'emplacement des sources).
 
 ## Avertissement de Windows
 
@@ -42,7 +45,8 @@ votre ordinateur ». Pour lancer FLASH quand même : « Informations complément
 
 Ce message vient de SmartScreen, qui ne connaît pas encore le fichier ; il ne signale aucun
 problème trouvé dans FLASH. Pour vérifier que le téléchargement est bien celui publié, comparez
-son empreinte SHA-256, donnée avec chaque version, à celle que calcule PowerShell :
+son empreinte SHA-256, que GitHub affiche à côté de chaque fichier de la Release et que les notes
+de version reprennent, à celle que calcule PowerShell :
 
 ```
 Get-FileHash FLASH-x.y.z-portable.zip -Algorithm SHA256
@@ -72,4 +76,4 @@ dépôt.
 
 Composants : SRT (MPL-2.0, sources sur https://github.com/Haivision/srt), mbedTLS (Apache-2.0),
 Opus (BSD-3), Monocypher (BSD-2 ou CC0), nlohmann json, en-têtes NVENC (MIT), chargeur WebView2
-(BSD-3). Leurs licences sont dans le dossier `licences` de chaque édition.
+(BSD-3), zlib. Leurs licences sont dans le dossier `licences` de chaque édition.

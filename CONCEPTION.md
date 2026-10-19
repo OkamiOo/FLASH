@@ -279,6 +279,7 @@ third_party/   Monocypher
 | Monocypher | BSD-2 ou CC0 | mention de licence |
 | En-têtes NVENC (nv-codec-headers), AMF, WIL, C++/WinRT | MIT | mention de licence |
 | SDK WebView2 (chargeur) | BSD-3 (Microsoft) | mention de licence |
+| zlib (lecture des zips de mise à jour) | zlib | mention de licence |
 
 Choix du 2026-10-18 : tout FLASH, appli et plugin, sous GPL-3.0 ou ultérieure (fichier
 `LICENSE`). Diffuser les binaires implique de publier les sources : chaque Release vient d'un tag
@@ -925,26 +926,68 @@ Même principe que SWIFT, clé propre à FLASH :
 - La clé privée est dans `%USERPROFILE%\.flash-cle\flash-maj.cle`, hors de tout dépôt, dossier
   réservé à l'utilisateur. `signer cle` la crée et n'affiche que la clé publique ;
   `signer manifeste <dossier> <version> <clé>` signe une publication.
-- Au lancement de l'interface (5 s après) puis chaque jour : manifeste et signature
-  téléchargés (WinHTTP, HTTPS seulement, sauf vers ce PC pour les essais). Une version plus
-  récente : seuls les fichiers dont l'empreinte diffère sont téléchargés dans `maj\`, vérifiés,
-  puis les fichiers en service passent en `.ancien` (Windows permet de renommer un exe lancé)
-  et les nouveaux prennent leur place. Le nouvel exe doit démarrer (`flash.exe --verifier-maj`)
-  sinon tout revient comme avant. Réglages affiche « FLASH x.y.z est prêt » et un bouton
-  « Relancer FLASH » (la nouvelle instance attend la fin de l'ancienne).
+- Au lancement de l'interface (5 s après) puis chaque jour : recherche de la dernière version
+  (WinHTTP, HTTPS seulement, sauf vers ce PC pour les essais ; détail plus bas, « Depuis la
+  0.3.1 »). Une version plus récente : seuls les fichiers dont l'empreinte diffère sont posés
+  dans `maj\`, vérifiés, puis les fichiers en service passent en `.ancien` (Windows permet de
+  renommer un exe lancé) et les nouveaux prennent leur place. Le nouvel exe doit démarrer
+  (`flash.exe --verifier-maj`) sinon tout revient comme avant. Réglages affiche « FLASH x.y.z
+  est prêt » et un bouton « Relancer FLASH » (la nouvelle instance attend la fin de l'ancienne).
 - Plugin : ses fichiers sont mis à jour dans `plugin-obs\` ; Réglages montre alors « une autre
   version est installée » et propose la mise à jour, OBS fermé, avec l'élévation seulement si
   elle est nécessaire.
-- Adresse de publication : les Releases GitHub de `OkamiOo/FLASH` (comme SWIFT), dépôt à créer
-  à la première publication ; d'ici là, la recherche ne trouve rien. `FLASH_MAJ_URL` en donne
-  une autre pour les essais. Les fichiers sont publiés à plat, « / »
-  devenant « . » (`plugin-obs.bin.64bit.flash-obs.dll`) : les Releases de GitHub ne gardent pas
-  de dossiers ; `signer` refuse deux chemins qui donneraient le même nom.
+- Adresse de publication : les Releases GitHub de `OkamiOo/FLASH` (comme SWIFT).
+  `FLASH_MAJ_URL` en donne une autre pour les essais, rangée comme GitHub (`latest`,
+  `download/v<version>/`).
 - `tools/publier.ps1` prépare une version dans `dist\publication\<version>\` : refuse de
   partir avec des modifications non commitées, compile les deux éditions, signe le manifeste,
-  range les fichiers à plat, ajoute le zip, l'installeur, leurs SHA-256 et les notes. Rien
-  n'est envoyé sans `-Publier`, qui crée la Release `v<version>` sur ce commit
-  (`gh release create`).
+  fait les trois fichiers de la Release et les notes (avec leurs SHA-256). Rien n'est envoyé
+  sans `-Publier`, qui crée la Release `v<version>` sur ce commit (`gh release create`).
+
+### Depuis la 0.3.1 : trois fichiers par Release
+
+La 0.3.0 publiait chaque fichier du dossier à plat (« / » devenant « . »), plus le manifeste,
+sa signature, le zip, l'installeur et un `SHA256.txt` : 22 fichiers sur la page, trop pour s'y
+retrouver. Une Release montre désormais cinq éléments, dans l'ordre où GitHub les trie (par
+nom) :
+
+1. `FLASH-<v>-installation.exe` ;
+2. `FLASH-<v>-portable.zip`, qui porte aussi `manifeste.txt` et `manifeste.sig` ;
+3. `FLASH-Licences-<v>.zip` : licences des composants, `LISEZMOI.txt`, `SOURCES.txt` (GPL et
+   emplacement des sources de la version et de SRT) ;
+4. et 5. les deux archives « Source code » que GitHub ajoute.
+
+Plus de `SHA256.txt` : GitHub affiche l'empreinte de chaque fichier, et les notes de version
+la reprennent.
+
+Pour les mises à jour, trois façons de faire tenir le manifeste dans ces trois fichiers :
+
+- (a) le manifeste dans le zip portable, et la dernière version trouvée par la redirection de
+  `releases/latest` ;
+- (b) un dépôt ou une branche à part pour le manifeste et les fichiers ;
+- (c) des fichiers de mise à jour sur la Release, cachés de la page.
+
+Choix : (a). Rien de plus à tenir que la Release elle-même, et GitHub ne permet pas de cacher
+un fichier d'une Release, ce qui exclut (c). La redirection n'utilise pas l'API de GitHub (pas
+de limite de requêtes par adresse). Le zip pèse 1,7 Mo : le télécharger entier pour ne
+remplacer que quelques fichiers coûte peu. La confiance vient toujours de la signature, pas de
+l'adresse.
+
+La recherche :
+
+1. `https://github.com/OkamiOo/FLASH/releases/latest`, sans suivre la redirection : la
+   réponse renvoie vers `.../tag/v<version>`. Pas de version là, ou pas plus récente : rien à
+   faire.
+2. Téléchargement de `.../releases/download/v<version>/FLASH-<version>-portable.zip`.
+3. Lecture du zip (`core/src/zip.cpp`, zlib, CRC de chaque entrée vérifié), puis du manifeste
+   et de sa signature. La signature est vérifiée, et la version du manifeste doit être celle du
+   tag.
+4. Les fichiers dont l'empreinte diffère sont extraits, vérifiés (taille, SHA-256) et posés
+   comme avant (`maj\`, `.ancien`, `--verifier-maj`, retour en arrière).
+
+Passage : une copie en 0.3.0 cherche encore `latest/download/manifeste.txt`, que la 0.3.1 ne
+publie plus. Elle ne se mettra pas à jour toute seule : la 0.3.1 se télécharge une fois à la
+main, les notes de version le disent. Les suivantes se mettent à jour seules.
 
 ### Retrait complet
 
@@ -963,6 +1006,18 @@ installée lance ensuite son désinstalleur ; la portable dit de supprimer le do
   - fichier changé après la signature : « LISEZMOI.txt ne correspond pas au manifeste »,
     rien touché ;
   - signature fausse : « signature invalide : mise à jour refusée », rien touché ;
+  - nouvel exe cassé mais bien signé : « la nouvelle version ne démarre pas », l'ancien
+    `flash.exe` remis.
+- Mises à jour de la 0.3.1 (2026-10-19), copie de l'édition portable et faux GitHub local
+  (`latest` renvoyant vers `tag/v<version>`, zips sous `download/v<version>/`) :
+  - aucune version publiée : « rien de neuf » ;
+  - 0.3.2 : seul le zip portable téléchargé, seuls `LISEZMOI.txt` et `fr-FR.ini` remplacés,
+    copie identique à la publication ;
+  - fichier changé dans le zip après la signature : « LISEZMOI.txt ne correspond pas au
+    manifeste », rien touché ;
+  - signature fausse : « signature invalide : mise à jour refusée », rien touché ;
+  - tag 0.3.5 avec un manifeste signé pour 0.3.4 : « le manifeste ne correspond pas à la
+    version publiée », rien touché ;
   - nouvel exe cassé mais bien signé : « la nouvelle version ne démarre pas », l'ancien
     `flash.exe` remis.
 - Plugin, vers un dossier d'essai (`FLASH_DOSSIER_PLUGIN`) : copie identique à la source,
@@ -1049,4 +1104,4 @@ réputation se construit avec les lancements.
 
 Choisi le 2026-10-18 : le premier cas (§ 9). Chaque édition porte les licences de ses
 composants dans `licences\` (SRT sous MPL-2.0, dont il faut dire où trouver les sources,
-mbedTLS, Opus, Monocypher, nlohmann json, en-têtes NVENC, chargeur WebView2).
+mbedTLS, Opus, Monocypher, nlohmann json, en-têtes NVENC, chargeur WebView2, zlib).

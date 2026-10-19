@@ -132,15 +132,6 @@ bool safe_path(const std::string &path)
 	return path.back() != '/';
 }
 
-std::string flat_name(const std::string &path)
-{
-	std::string s = path;
-	for (char &c : s)
-		if (c == '/')
-			c = '.';
-	return s;
-}
-
 bool parse_manifest(const std::string &text, const std::string &signature_hex, const uint8_t public_key[32],
 		    Manifest &out, std::string &error)
 {
@@ -249,7 +240,16 @@ std::wstring widen(const std::string &s)
 
 } // namespace
 
-bool download(const std::string &url, std::vector<uint8_t> &out, std::string &error, size_t max_size)
+namespace {
+
+struct Get {
+	Handle session, connection, request;
+	DWORD status = 0;
+};
+
+// Requête GET envoyée et réponse reçue, en suivant les redirections ou non.
+// HTTPS seulement, sauf vers ce PC (essais).
+bool get(const std::string &url, bool follow, Get &g, std::string &error)
 {
 	bool secure;
 	std::string rest;
@@ -276,33 +276,69 @@ bool download(const std::string &url, std::vector<uint8_t> &out, std::string &er
 		return false;
 	}
 
-	Handle session{WinHttpOpen(L"FLASH", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
-	if (!session.h) {
+	g.session.h = WinHttpOpen(L"FLASH", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+	if (!g.session.h) {
 		error = "réseau indisponible";
 		return false;
 	}
-	WinHttpSetTimeouts(session.h, 5000, 5000, 10000, 30000);
-	Handle connection{WinHttpConnect(session.h, widen(host_port).c_str(), port, 0)};
-	Handle request{connection.h ? WinHttpOpenRequest(connection.h, L"GET", widen(path).c_str(), nullptr, WINHTTP_NO_REFERER,
-							 WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0)
-				    : nullptr};
-	if (!request.h || !WinHttpSendRequest(request.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-	    !WinHttpReceiveResponse(request.h, nullptr)) {
+	WinHttpSetTimeouts(g.session.h, 5000, 5000, 10000, 30000);
+	g.connection.h = WinHttpConnect(g.session.h, widen(host_port).c_str(), port, 0);
+	if (g.connection.h)
+		g.request.h = WinHttpOpenRequest(g.connection.h, L"GET", widen(path).c_str(), nullptr, WINHTTP_NO_REFERER,
+						 WINHTTP_DEFAULT_ACCEPT_TYPES, secure ? WINHTTP_FLAG_SECURE : 0);
+	if (g.request.h && !follow) {
+		DWORD off = WINHTTP_DISABLE_REDIRECTS;
+		WinHttpSetOption(g.request.h, WINHTTP_OPTION_DISABLE_FEATURE, &off, sizeof(off));
+	}
+	if (!g.request.h || !WinHttpSendRequest(g.request.h, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+	    !WinHttpReceiveResponse(g.request.h, nullptr)) {
 		error = "téléchargement impossible (" + std::to_string(GetLastError()) + ")";
 		return false;
 	}
-	DWORD status = 0, len = sizeof(status);
-	WinHttpQueryHeaders(request.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
-			    &status, &len, WINHTTP_NO_HEADER_INDEX);
-	if (status != 200) {
-		error = "réponse " + std::to_string(status);
+	DWORD len = sizeof(g.status);
+	WinHttpQueryHeaders(g.request.h, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+			    &g.status, &len, WINHTTP_NO_HEADER_INDEX);
+	return true;
+}
+
+} // namespace
+
+bool redirect_location(const std::string &url, std::string &location, std::string &error)
+{
+	Get g;
+	if (!get(url, false, g, error))
+		return false;
+	if (g.status < 300 || g.status >= 400) {
+		error = "réponse " + std::to_string(g.status);
+		return false;
+	}
+	wchar_t buf[2048];
+	DWORD len = sizeof(buf);
+	if (!WinHttpQueryHeaders(g.request.h, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, buf, &len,
+				 WINHTTP_NO_HEADER_INDEX)) {
+		error = "redirection sans adresse";
+		return false;
+	}
+	const int n = WideCharToMultiByte(CP_UTF8, 0, buf, (int)(len / sizeof(wchar_t)), nullptr, 0, nullptr, nullptr);
+	location.assign(n, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, buf, (int)(len / sizeof(wchar_t)), location.data(), n, nullptr, nullptr);
+	return true;
+}
+
+bool download(const std::string &url, std::vector<uint8_t> &out, std::string &error, size_t max_size)
+{
+	Get g;
+	if (!get(url, true, g, error))
+		return false;
+	if (g.status != 200) {
+		error = "réponse " + std::to_string(g.status);
 		return false;
 	}
 	out.clear();
 	std::vector<uint8_t> buf(64 * 1024);
 	for (;;) {
 		DWORD got = 0;
-		if (!WinHttpReadData(request.h, buf.data(), (DWORD)buf.size(), &got)) {
+		if (!WinHttpReadData(g.request.h, buf.data(), (DWORD)buf.size(), &got)) {
 			error = "lecture interrompue";
 			return false;
 		}

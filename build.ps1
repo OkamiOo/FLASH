@@ -81,6 +81,7 @@ try {
             "opus.txt" = ".deps\opus\opus-1.5.2\COPYING"; "monocypher.txt" = "third_party\monocypher\LICENCE.md"
             "nlohmann-json.txt" = ".deps\obs-deps\licenses\nlohmann-json\LICENSE.MIT"
             "nv-codec-headers.txt" = ".deps\obs-deps\licenses\nv-codec-headers\LICENSE"; "webview2.txt" = ".deps\webview2\LICENSE.txt"
+            "zlib.txt" = ".deps\obs-deps\licenses\zlib\README"
         }
         foreach ($l in $licences.GetEnumerator()) { Copy-Item "$src\$($l.Value)" "$out\licences\$($l.Key)" }
 
